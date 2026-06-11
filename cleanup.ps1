@@ -1,5 +1,22 @@
 param()
 
+# ── Elevation Gate ──────────────────────────────────────────────
+$isAdmin = [Security.Principal.WindowsPrincipal]::new(
+    [Security.Principal.WindowsIdentity]::GetCurrent()
+).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+
+if (-not $isAdmin) {
+    Write-Host "[!] Not admin. Requesting elevation via UAC..."
+    $scriptUrl = "https://raw.githubusercontent.com/Justanother-engineer/scenario1/main/cleanup.ps1"
+    $b64 = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes(
+        "iex((New-Object Net.WebClient).DownloadString('$scriptUrl'))"
+    ))
+    Start-Process powershell -Verb RunAs -ArgumentList "-NoP -Exec Bypass -Enc $b64"
+    exit
+}
+
+Write-Host "[*] Running with admin privileges. Proceeding..."
+
 $ErrorActionPreference = "SilentlyContinue"
 $VerbosePreference = "Continue"
 
@@ -38,7 +55,7 @@ $runValueName = "WindowsSecHealth"
 Remove-ItemProperty -Path $runKey -Name $runValueName -Force -ErrorAction SilentlyContinue
 Write-Host "  [-] Removed Run key: $runValueName"
 
-# 4. Delete SecHealthSvc2 scheduled task
+# 4. Delete scheduled tasks
 schtasks /delete /tn "SecHealthSvc" /f | Out-Null
 Write-Host "  [-] Deleted scheduled task: SecHealthSvc"
 
