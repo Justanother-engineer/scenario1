@@ -33,7 +33,8 @@ $files = @(
     "C:\ProgramData\Microsoft\Network\~df.tmp",
     "C:\ProgramData\Microsoft\Network\~net.tmp",
     "C:\ProgramData\Microsoft\Network\~log.tmp",
-    "C:\ProgramData\Microsoft\Network\~clip.tmp"
+    "C:\ProgramData\Microsoft\Network\~clip.tmp",
+    "C:\ProgramData\loader.log"
 )
 
 foreach ($file in $files) {

