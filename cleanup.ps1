@@ -1,5 +1,10 @@
 param()
 
+# -- CONFIG: set this to the raw URL of the directory containing cleanup.ps1 --
+#   i.e. the 'github/' folder uploaded to your repo (see Makefile sync target)
+#   Example: https://raw.githubusercontent.com/<user>/<repo>/main/scenario-01-rmm/github
+$scriptBase = "https://raw.githubusercontent.com/Justanother-engineer/scenario1/main/scenario-01-rmm/github"
+
 # ── Elevation Gate ──────────────────────────────────────────────
 $isAdmin = [Security.Principal.WindowsPrincipal]::new(
     [Security.Principal.WindowsIdentity]::GetCurrent()
@@ -7,7 +12,7 @@ $isAdmin = [Security.Principal.WindowsPrincipal]::new(
 
 if (-not $isAdmin) {
     Write-Host "[!] Not admin. Requesting elevation via UAC..."
-    $scriptUrl = "https://raw.githubusercontent.com/Justanother-engineer/scenario1/main/cleanup.ps1"
+    $scriptUrl = "$scriptBase/cleanup.ps1"
     $b64 = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes(
         "iex((New-Object Net.WebClient).DownloadString('$scriptUrl'))"
     ))
@@ -72,7 +77,7 @@ netsh advfirewall set allprofiles state on | Out-Null
 Write-Host "  [+] Firewall re-enabled"
 
 # 7. Remove HKLM Network\App registry payload
-$netKey = "HKLM:\SOFTWARE\Microsoft\Network"
+$netKey = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
 Remove-ItemProperty -Path $netKey -Name "App" -Force -ErrorAction SilentlyContinue
 Remove-Item -Path $netKey -Force -ErrorAction SilentlyContinue
 Write-Host "  [-] Removed registry: Network\App"
