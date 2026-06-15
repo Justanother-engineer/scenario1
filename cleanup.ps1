@@ -77,10 +77,9 @@ netsh advfirewall set allprofiles state on | Out-Null
 Write-Host "  [+] Firewall re-enabled"
 
 # 7. Remove HKLM Network\App registry payload
-$netKey = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Explorer\Advanced"
+$netKey = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Explorer"
 Remove-ItemProperty -Path $netKey -Name "App" -Force -ErrorAction SilentlyContinue
-Remove-Item -Path $netKey -Force -ErrorAction SilentlyContinue
-Write-Host "  [-] Removed registry: Network\App"
+Write-Host "  [-] Removed registry: Explorer\App"
 
 # 8. Delete self
 $selfPath = $MyInvocation.MyCommand.Path
