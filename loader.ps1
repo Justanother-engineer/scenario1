@@ -3,7 +3,7 @@ param()
 # -- CONFIG: set this to the raw URL of the directory containing stage.dll --
 #   i.e. the 'github/' folder uploaded to your repo (see Makefile sync target)
 #   Example: https://raw.githubusercontent.com/<user>/<repo>/main/scenario-01-rmm/github
-$scriptBase = "https://raw.githubusercontent.com/Justanother-engineer/scenario1/main/scenario-01-rmm/github"
+$scriptBase = "https://github.com/Justanother-engineer/scenario1/raw/refs/heads/main"
 
 # -- Elevation Gate ----------------------------------------------
 $isAdmin = [Security.Principal.WindowsPrincipal]::new(
