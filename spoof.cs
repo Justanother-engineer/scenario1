@@ -109,9 +109,10 @@ public static class Spoof
             return;
         }
 
+        int retLen;
         if (NtQueryInformationProcess(pi.hProcess, ProcessBasicInformation,
             out PROCESS_BASIC_INFORMATION pbi, Marshal.SizeOf(typeof(PROCESS_BASIC_INFORMATION)),
-            out int retLen) != 0)
+            out retLen) != 0)
         {
             ResumeThread(pi.hThread);
             CloseHandle(pi.hProcess);
@@ -120,7 +121,8 @@ public static class Spoof
         }
 
         byte[] pebBuffer = new byte[IntPtr.Size * 4];
-        if (!ReadProcessMemory(pi.hProcess, pbi.PebBaseAddress, pebBuffer, pebBuffer.Length, out int bytesRead))
+        int bytesRead;
+        if (!ReadProcessMemory(pi.hProcess, pbi.PebBaseAddress, pebBuffer, pebBuffer.Length, out bytesRead))
         {
             ResumeThread(pi.hThread);
             CloseHandle(pi.hProcess);
@@ -143,7 +145,8 @@ public static class Spoof
         byte[] newCmdBytes = Encoding.Unicode.GetBytes(realCmd);
         IntPtr bufferPtr = Marshal.ReadIntPtr(cmdBuffer, 8);
 
-        if (!WriteProcessMemory(pi.hProcess, bufferPtr, newCmdBytes, newCmdBytes.Length, out int written))
+        int written;
+        if (!WriteProcessMemory(pi.hProcess, bufferPtr, newCmdBytes, newCmdBytes.Length, out written))
         {
             ResumeThread(pi.hThread);
             CloseHandle(pi.hProcess);
