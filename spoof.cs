@@ -102,7 +102,7 @@ public static class Spoof
         {
             string logPath = @"C:\ProgramData\loader.log";
             string line = DateTime.Now.ToString("[yyyy-MM-dd HH:mm:ss] ") + msg;
-            File.AppendAllText(logPath, line + Environment.NewLine);
+            File.AppendAllText(logPath, line + Environment.NewLine, Encoding.Unicode);
         }
         catch { }
     }
