@@ -199,19 +199,19 @@ public static class Spoof
                     (IntPtr)BitConverter.ToInt32(testBuffer, 8);
                 
                 string bytesHex = BitConverter.ToString(testBuffer).Replace("-", " ");
-                Log($"[DEBUG] Offset 0x{offset:X}: Read=OK, Length={length}, MaxLength={maxLength}, Buffer=0x{bufferPtr:X}");
-                Log($"[DEBUG]   Bytes: {bytesHex}");
+                Log("[DEBUG] Offset 0x" + offset.ToString("X") + ": Read=OK, Length=" + length + ", MaxLength=" + maxLength + ", Buffer=0x" + bufferPtr.ToString("X"));
+                Log("[DEBUG]   Bytes: " + bytesHex);
                 
                 if (length > 0 && maxLength >= length && bufferPtr != IntPtr.Zero)
                 {
                     commandLineOffset = offset;
-                    Log($"[+] Found valid CommandLine at offset 0x{offset:X}");
+                    Log("[+] Found valid CommandLine at offset 0x" + offset.ToString("X"));
                     break;
                 }
             }
             else
             {
-                Log($"[DEBUG] Offset 0x{offset:X}: Read=FAILED");
+                Log("[DEBUG] Offset 0x" + offset.ToString("X") + ": Read=FAILED");
             }
         }
 
