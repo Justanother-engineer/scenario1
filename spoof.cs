@@ -153,7 +153,7 @@ public static class Spoof
         }
         Log("[+] PEB read");
 
-        int ppOffset = IntPtr.Size == 8 ? 0x18 : 0x0C;
+        int ppOffset = IntPtr.Size == 8 ? 0x20 : 0x10;
         IntPtr processParametersPtr = Marshal.ReadIntPtr(pebBuffer, ppOffset);
         Log("[+] ProcessParameters resolved");
 
