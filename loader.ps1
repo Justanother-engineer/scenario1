@@ -181,5 +181,9 @@ foreach ($k in $artifacts.Keys) {
     $path = $artifacts[$k]
     $isReg = $path -match '^HKLM:'
     $ok = $isReg -or (Test-Path $path)
-    Write-Log (($ok ? "[+] " : "[-] ") + $k + " : " + $path)
+    if ($ok) {
+        Write-Log "[+] $k : $path"
+    } else {
+        Write-Log "[-] $k : $path"
+    }
 }
