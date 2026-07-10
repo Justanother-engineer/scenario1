@@ -81,8 +81,50 @@ $netKey = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Explorer"
 Remove-ItemProperty -Path $netKey -Name "App" -Force -ErrorAction SilentlyContinue
 Write-Host "  [-] Removed registry: Explorer\App"
 
-# 8. Delete self
+# 8. Delete self (deferred until after the verification summary so the log
+#    of what was removed survives this run)
 $selfPath = $MyInvocation.MyCommand.Path
+
+# 9. Residual verification
+Write-Host ""
+Write-Host "[*] Verifying residuals..."
+$residFiles = @(
+    "C:\ProgramData\Microsoft\Crypto\RSA\S-1-5-18\stage.dll",
+    "C:\ProgramData\config.inf",
+    "C:\ProgramData\Microsoft\Windows\Caches\svchost.exe",
+    "C:\ProgramData\Microsoft\Crypto\RSA\MachineKeys\~adf.bin",
+    "C:\Windows\Temp\~s1.tmp",
+    "C:\Windows\Temp\~s2.tmp",
+    "C:\ProgramData\Microsoft\Network\~df.tmp",
+    "C:\ProgramData\Microsoft\Network\~net.tmp",
+    "C:\ProgramData\Microsoft\Network\~clip.tmp"
+) | Where-Object { Test-Path $_ }
+$residRun = Get-ItemProperty "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run" -Name "WindowsSecHealth" -ErrorAction SilentlyContinue
+$residApp = Get-ItemProperty "HKLM:\Software\Microsoft\Windows\CurrentVersion\Explorer" -Name "App" -ErrorAction SilentlyContinue
+$residTask1 = schtasks /query /tn "SecHealthSvc" 2>$null
+$residTask2 = schtasks /query /tn "SecHealthSvc2" 2>$null
+$residUser  = net user SupportUser 2>$null
+
+$residCount = $residFiles.Count +
+    $(if ($residRun) {1} else {0}) +
+    $(if ($residApp) {1} else {0}) +
+    $(if ($residTask1) {1} else {0}) +
+    $(if ($residTask2) {1} else {0}) +
+    $(if ($residUser -match "SupportUser") {1} else {0})
+
+if ($residCount -eq 0) {
+    Write-Host "[+] Clean: no residuals detected"
+} else {
+    Write-Host "[-] $residCount residual(s) remain:"
+    $residFiles | ForEach-Object { Write-Host "    file: $_" }
+    if ($residRun)  { Write-Host "    reg:  HKLM\...\Run\WindowsSecHealth" }
+    if ($residApp)  { Write-Host "    reg:  HKLM\...\Explorer\App" }
+    if ($residTask1){ Write-Host "    task: SecHealthSvc" }
+    if ($residTask2){ Write-Host "    task: SecHealthSvc2" }
+    if ($residUser -match "SupportUser") { Write-Host "    user: SupportUser" }
+}
+
+# 10. Delete self (after summary)
 if ($selfPath -and (Test-Path $selfPath)) {
     Remove-Item -Path $selfPath -Force
 }
