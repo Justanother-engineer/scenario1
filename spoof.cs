@@ -141,7 +141,7 @@ public static class Spoof
         }
         Log("[+] PEB located");
 
-        byte[] pebBuffer = new byte[IntPtr.Size * 4];
+        byte[] pebBuffer = new byte[IntPtr.Size * 5];
         int bytesRead;
         if (!ReadProcessMemory(pi.hProcess, pbi.PebBaseAddress, pebBuffer, pebBuffer.Length, out bytesRead))
         {
