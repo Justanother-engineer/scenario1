@@ -30,7 +30,6 @@ Write-Host "[*] Cleaning up scenario-01-rmm artifacts..."
 # 1. Delete scattered artifact files
 $files = @(
     "C:\ProgramData\Microsoft\Crypto\RSA\S-1-5-18\stage.dll",
-    "C:\Windows\Temp\config.inf",
     "C:\ProgramData\Microsoft\Windows\Caches\svchost.exe",
     "C:\ProgramData\Microsoft\Crypto\RSA\MachineKeys\~adf.bin",
     "C:\Windows\Temp\~s1.tmp",
@@ -90,7 +89,6 @@ Write-Host ""
 Write-Host "[*] Verifying residuals..."
 $residFiles = @(
     "C:\ProgramData\Microsoft\Crypto\RSA\S-1-5-18\stage.dll",
-    "C:\Windows\Temp\config.inf",
     "C:\ProgramData\Microsoft\Windows\Caches\svchost.exe",
     "C:\ProgramData\Microsoft\Crypto\RSA\MachineKeys\~adf.bin",
     "C:\Windows\Temp\~s1.tmp",

