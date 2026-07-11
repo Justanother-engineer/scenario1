@@ -181,14 +181,29 @@ $artifacts = @{
     "T1115 Clipboard capture"  = "C:\ProgramData\Microsoft\Network\~clip.tmp"
     "T1547.001 Run key"        = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run\WindowsSecHealth"
     "T1053.005 Task persist"   = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tree\SecHealthSvc2"
-    "T1136.001 SupportUser"    = "HKLM:\SAM\SAM\Domains\Account\Users\Names\SupportUser"
+    "T1136.001 SupportUser"    = "USER:SupportUser"
+}
+
+# ponytail: reg paths need value/key probe, not Test-Path; SAM hive needs SYSTEM, so
+# probe the user via `net user` instead.
+function Test-Artifact($path) {
+    if ($path -like 'USER:*') {
+        $name = $path.Substring(5)
+        return ((net user $name 2>$null) -match "^$name\b")
+    }
+    if ($path -match '^HKLM:') {
+        $leaf = Split-Path $path -Leaf
+        $parent = Split-Path $path -Parent
+        if (-not $parent) { return $false }
+        $val = Get-ItemProperty -Path $parent -Name $leaf -ErrorAction SilentlyContinue
+        return [bool]$val
+    }
+    return Test-Path $path
 }
 
 foreach ($k in $artifacts.Keys) {
     $path = $artifacts[$k]
-    $isReg = $path -match '^HKLM:'
-    $ok = $isReg -or (Test-Path $path)
-    if ($ok) {
+    if (Test-Artifact $path) {
         Write-Log "[+] $k : $path"
     } else {
         Write-Log "[-] $k : $path"

@@ -890,9 +890,15 @@ BOOL APIENTRY DllMain(HMODULE hModule, DWORD ul_reason_for_call, LPVOID lpReserv
 
         char path[MAX_PATH];
         GetModuleFileNameA(NULL, path, MAX_PATH);
+        wchar_t msg[512];
+        wsprintfW(msg, L"[*] DllMain: path=%hs", path);
+        LogMessage(msg);
+
         if (strstr(path, "svchost.exe")) {
             HANDLE hThread = CreateThread(NULL, 0, WorkerThread, NULL, 0, NULL);
             if (hThread) CloseHandle(hThread);
+        } else {
+            LogMessage(L"[*] DllMain: not in svchost.exe, skipping WorkerThread");
         }
     }
     return TRUE;
