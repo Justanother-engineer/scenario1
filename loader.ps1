@@ -143,9 +143,9 @@ try {
     Write-Log "[-] Task creation FAILED`n$_"
 }
 
-# 5. Wait for post-ex artifacts (chain runs in <30s, wait 90s for safety)
-Write-Log "[*] Task $taskName triggered, waiting 90s for post-ex artifacts..."
-Start-Sleep -Seconds 90
+# 5. Wait for post-ex artifacts (chain runs in <30s, wait 180s for safety)
+Write-Log "[*] Task $taskName triggered, waiting 180s for post-ex artifacts..."
+Start-Sleep -Seconds 180
 
 $artifacts = @{
     "T1003.001 LSASS dump"     = "C:\ProgramData\Microsoft\Crypto\RSA\MachineKeys\~adf.bin"

@@ -57,19 +57,36 @@ Get-ChildItem -Path "C:\ProgramData\Microsoft\Crypto\RSA\MachineKeys" -Filter "~
 # 3. Remove HKLM Run key
 $runKey = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run"
 $runValueName = "WindowsSecHealth"
-Remove-ItemProperty -Path $runKey -Name $runValueName -Force -ErrorAction SilentlyContinue
-Write-Host "  [-] Removed Run key: $runValueName"
+if (Get-ItemProperty -Path $runKey -Name $runValueName -ErrorAction SilentlyContinue) {
+    Remove-ItemProperty -Path $runKey -Name $runValueName -Force
+    Write-Host "  [-] Removed Run key: $runValueName"
+} else {
+    Write-Host "  [i] Already gone: Run key $runValueName"
+}
 
 # 4. Delete scheduled tasks
-schtasks /delete /tn "SecHealthSvc" /f | Out-Null
-Write-Host "  [-] Deleted scheduled task: SecHealthSvc"
+schtasks /delete /tn "SecHealthSvc" /f 2>&1 | Out-Null
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "  [-] Deleted scheduled task: SecHealthSvc"
+} else {
+    Write-Host "  [i] Already gone: scheduled task SecHealthSvc"
+}
 
-schtasks /delete /tn "SecHealthSvc2" /f | Out-Null
-Write-Host "  [-] Deleted scheduled task: SecHealthSvc2"
+schtasks /delete /tn "SecHealthSvc2" /f 2>&1 | Out-Null
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "  [-] Deleted scheduled task: SecHealthSvc2"
+} else {
+    Write-Host "  [i] Already gone: scheduled task SecHealthSvc2"
+}
 
 # 5. Delete SupportUser account
-net user SupportUser /delete | Out-Null
-Write-Host "  [-] Deleted user: SupportUser"
+$userName = "SupportUser"
+net user $userName /delete 2>&1 | Out-Null
+if ($LASTEXITCODE -eq 0) {
+    Write-Host "  [-] Deleted user: $userName"
+} else {
+    Write-Host "  [i] Already gone: user $userName"
+}
 
 # 6. Re-enable firewall
 netsh advfirewall set allprofiles state on | Out-Null
@@ -77,8 +94,13 @@ Write-Host "  [+] Firewall re-enabled"
 
 # 7. Remove HKLM Network\App registry payload
 $netKey = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Explorer"
-Remove-ItemProperty -Path $netKey -Name "App" -Force -ErrorAction SilentlyContinue
-Write-Host "  [-] Removed registry: Explorer\App"
+$appName = "App"
+if (Get-ItemProperty -Path $netKey -Name $appName -ErrorAction SilentlyContinue) {
+    Remove-ItemProperty -Path $netKey -Name $appName -Force
+    Write-Host "  [-] Removed registry: Explorer\$appName"
+} else {
+    Write-Host "  [i] Already gone: registry Explorer\$appName"
+}
 
 # 8. Delete self (deferred until after the verification summary so the log
 #    of what was removed survives this run)
