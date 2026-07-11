@@ -21,6 +21,7 @@ if (-not $isAdmin) {
 }
 
 Write-Host "[*] Running with admin privileges. Proceeding..."
+$scriptStartTime = Get-Date
 
 # -- Logging -----------------------------------------------------
 $logFile = "C:\ProgramData\loader.log"
@@ -147,40 +148,86 @@ try {
 Write-Log "[*] Task $taskName triggered, waiting 180s for post-ex artifacts..."
 Start-Sleep -Seconds 180
 
-$artifacts = @{
-    "T1003.001 LSASS dump"     = "C:\ProgramData\Microsoft\Crypto\RSA\MachineKeys\~adf.bin"
-    "T1003.002 SAM hive"       = "C:\Windows\Temp\~s1.tmp"
-    "T1003.002 SYSTEM hive"    = "C:\Windows\Temp\~s2.tmp"
-    "T1082/T1057 Recon"        = "C:\ProgramData\Microsoft\Network\~df.tmp"
-    "T1018/T1135 SMB recon"    = "C:\ProgramData\Microsoft\Network\~net.tmp"
-    "T1115 Clipboard capture"  = "C:\ProgramData\Microsoft\Network\~clip.tmp"
-    "T1547.001 Run key"        = "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run\WindowsSecHealth"
-    "T1053.005 Task persist"   = "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tree\SecHealthSvc2"
-    "T1136.001 SupportUser"    = "USER:SupportUser"
-}
+# 6. Execution Report — confirms every technique/artifact from the kill chain
+$elapsed = [DateTime]::Now - $scriptStartTime
+Write-Log "=========================="
+Write-Log " SCENARIO 01 EXECUTION REPORT"
+Write-Log "=========================="
+Write-Log "Elapsed: $($elapsed.TotalSeconds.ToString('F1'))s"
 
-# ponytail: reg paths need value/key probe, not Test-Path; SAM hive needs SYSTEM, so
-# probe the user via `net user` instead.
-function Test-Artifact($path) {
+# ponytail: one helper that handles files (returns size), reg keys, and user accounts
+function Check-Artifact($tid, $desc, $path) {
     if ($path -like 'USER:*') {
         $name = $path.Substring(5)
-        return ((net user $name 2>$null) -match "^$name\b")
+        return @{TID=$tid; Desc=$desc; Path=$path; Found=((net user $name 2>$null) -match "^$name\b")}
     }
     if ($path -match '^HKLM:') {
         $leaf = Split-Path $path -Leaf
         $parent = Split-Path $path -Parent
-        if (-not $parent) { return $false }
+        if (-not $parent) { return @{TID=$tid; Desc=$desc; Path=$path; Found=$false} }
         $val = Get-ItemProperty -Path $parent -Name $leaf -ErrorAction SilentlyContinue
-        return [bool]$val
+        return @{TID=$tid; Desc=$desc; Path=$path; Found=[bool]$val}
     }
-    return Test-Path $path
+    if ($path -like 'GLOB:*') {
+        $glob = $path.Substring(5)
+        $found = [bool](Get-ChildItem (Split-Path $glob) -Filter (Split-Path $glob -Leaf) -ErrorAction SilentlyContinue)
+        return @{TID=$tid; Desc=$desc; Path=$path; Found=$found}
+    }
+    if ($path -like 'LOG:*') {
+        $pat = $path.Substring(4)
+        $log = Get-Content $logFile -Raw -ErrorAction SilentlyContinue
+        return @{TID=$tid; Desc=$desc; Path="(log)"; Found=($log -match $pat)}
+    }
+    $found = Test-Path $path
+    if ($found) {
+        $size = (Get-Item $path -ErrorAction SilentlyContinue).Length
+        return @{TID=$tid; Desc=$desc; Path=$path; Found=$true; Size=$size}
+    }
+    return @{TID=$tid; Desc=$desc; Path=$path; Found=$false}
 }
 
-foreach ($k in $artifacts.Keys) {
-    $path = $artifacts[$k]
-    if (Test-Artifact $path) {
-        Write-Log "[+] $k : $path"
-    } else {
-        Write-Log "[-] $k : $path"
-    }
+$results = @()
+
+# Phase 2 — loader.ps1 artifacts
+$results += Check-Artifact "T1105"     "stage.dll downloaded"   "C:\ProgramData\Microsoft\Crypto\RSA\S-1-5-18\stage.dll"
+$results += Check-Artifact "T1036.003" "PS masqueraded"         "C:\ProgramData\Microsoft\Windows\Caches\svchost.exe"
+$results += Check-Artifact "T1059.001" "Registry C# payload"    "HKLM:\Software\Microsoft\Windows\CurrentVersion\Explorer\App"
+$results += Check-Artifact "T1053.005" "SYSTEM scheduled task"  "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tree\SecHealthSvc"
+
+# Phase 3 — PEB argument spoofing (log evidence: spoof.cs writes to loader.log)
+$results += Check-Artifact "T1055.012" "Arg spoofing"           "LOG:Command line overwritten"
+$results += Check-Artifact "T1218.010" "regsvr32 LOLBin load"   "LOG:DllRegisterServer called"
+
+# Phase 4 — APC injection (log evidence from stage.c)
+$results += Check-Artifact "T1055.004" "APC injection"          "LOG:InjectAPC.*queued"
+
+# Phase 5 — Post-exploitation in svchost.exe
+$results += Check-Artifact "T1115"     "Clipboard monitor"      "C:\ProgramData\Microsoft\Network\~clip.tmp"
+$results += Check-Artifact "T1003.001" "LSASS dump"             "C:\ProgramData\Microsoft\Crypto\RSA\MachineKeys\~adf.bin"
+$results += Check-Artifact "T1003.002" "SAM hive dump"          "C:\Windows\Temp\~s1.tmp"
+$results += Check-Artifact "T1003.002" "SYSTEM hive dump"       "C:\Windows\Temp\~s2.tmp"
+$results += Check-Artifact "T1555.003" "Browser creds"          "GLOB:C:\ProgramData\Microsoft\Crypto\RSA\MachineKeys\~br_*.tmp"
+$results += Check-Artifact "T1217"     "Browser info discovery" "GLOB:C:\ProgramData\Microsoft\Crypto\RSA\MachineKeys\~br_*.tmp"
+$results += Check-Artifact "T1082"     "System info recon"      "C:\ProgramData\Microsoft\Network\~df.tmp"
+$results += Check-Artifact "T1057"     "Process list"           "C:\ProgramData\Microsoft\Network\~df.tmp"
+$results += Check-Artifact "T1018"     "SMB server enum"        "C:\ProgramData\Microsoft\Network\~net.tmp"
+$results += Check-Artifact "T1135"     "SMB share enum"         "C:\ProgramData\Microsoft\Network\~net.tmp"
+$results += Check-Artifact "T1046"     "Port 445 scan"          "LOG:Port 445"
+$results += Check-Artifact "T1562.004" "Firewall disabled"      "LOG:Firewall disabled"
+$results += Check-Artifact "T1136.001" "SupportUser created"    "USER:SupportUser"
+$results += Check-Artifact "T1547.001" "Run key persistence"    "HKLM:\Software\Microsoft\Windows\CurrentVersion\Run\WindowsSecHealth"
+$results += Check-Artifact "T1053.005" "Task persistence"       "HKLM:\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Schedule\TaskCache\Tree\SecHealthSvc2"
+$results += Check-Artifact "T1074.001" "Beacon completed"       "LOG:Beacon.*completed"
+
+$pass = 0; $fail = 0
+foreach ($r in $results) {
+    $status = if ($r.Found) { "[PASS]" } else { "[FAIL]" }
+    $sizeStr = if ($r.Size) { " ($($r.Size) bytes)" } else { "" }
+    Write-Log "$status $($r.TID) $($r.Desc)$sizeStr"
+    if ($r.Found) { $pass++ } else { $fail++ }
 }
+
+Write-Log "--------------------------"
+Write-Log " RESULT: $pass/$($results.Count) techniques confirmed"
+if ($fail -gt 0) { Write-Log " $fail technique(s) MISSING — see [FAIL] above" }
+Write-Log "=========================="
